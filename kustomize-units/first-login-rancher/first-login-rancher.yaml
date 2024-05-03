@@ -1,0 +1,24 @@
+---
+apiVersion: management.cattle.io/v3
+kind: Setting
+metadata:
+  name: eula-agreed
+value: "${CURRENT_TIME}"
+---
+apiVersion: management.cattle.io/v3
+kind: Setting
+metadata:
+  name: first-login
+value: "false"
+---
+apiVersion: management.cattle.io/v3
+kind: Setting
+metadata:
+  name: server-url
+value: "https://${RANCHER_EXTERNAL_URL}"
+---
+apiVersion: management.cattle.io/v3
+kind: Setting
+metadata:
+  name: telemetry-opt
+value: out

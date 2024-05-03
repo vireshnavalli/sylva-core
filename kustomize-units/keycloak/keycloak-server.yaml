@@ -1,0 +1,37 @@
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: keycloak
+  labels:
+    app: sso
+spec:
+  db:
+    vendor: postgres
+    host: postgres-primary
+    usernameSecret:
+      name: keycloak-db-secret
+      key: username
+    passwordSecret:
+      name: postgres
+      key: postgres-password
+  hostname:
+    hostname: ${KEYCLOAK_DNS}
+  http:
+    tlsSecret: keycloak-internal-tls
+  ingress:
+    enabled: false
+  instances: 1
+  unsupported:
+    podTemplate:
+      spec:
+        containers:
+          - securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              runAsGroup: 1000
+              runAsNonRoot: true
+              runAsUser: 1000
+              seccompProfile:
+                type: RuntimeDefault

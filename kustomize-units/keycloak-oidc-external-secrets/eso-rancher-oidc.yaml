@@ -1,0 +1,17 @@
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: eso-rancher-oidc
+  namespace: cattle-global-data
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: eso-store-k8s-keycloak
+  target:
+    name: keycloakoidcconfig-clientsecret # name of the k8s Secret to be created in the same namespace as ExternalSecret
+  data:
+  - secretKey: clientSecret
+    remoteRef:
+      key: keycloak-client-secret-rancher-client # this secret is a byproduct of the rancher-client KeycloakClient resource
+      property: CLIENT_SECRET

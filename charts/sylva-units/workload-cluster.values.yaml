@@ -1,0 +1,327 @@
+# ############################################################################
+#
+# This Helm values files contains override used to create a workload cluster
+# with sylva-units chart and deploy a selected subset of units into it.
+#
+# ############################################################################
+
+# This value override file is meant to deploy sylva-units _in the mgmt cluster_
+# _in a dedicated namespace_, it will produce Flux Kustomization and HelmReleases
+# _in the mgmt cluster_ and those will ultimately deploy Kubernetes resources
+# in the workload cluster itself.
+#
+# There are a few exceptions:
+# - the 'cluster' unit produces CAPI resource for the cluster _in the mgmt cluster_
+
+# when this values override file is used, it is assumed that
+# - `cluster.capi_providers.(infra|bootstrap)_provider` are set to relevant values
+# - `openstack` for Openstack settings needed by cinder-csi
+# - etc.
+# any settings at the root of values, or under 'cluster', which is
+# needed for any unit listed below, will have to be specified
+
+cluster:
+  name: '{{ .Release.Namespace }}'
+
+# ensure that our unit Kustomizations are deployed
+# in the workload cluster
+# (some units are deployed on mgmt cluster and will use
+#  "kustomization-deployed-on-mgmt-cluster" or "helmrelease-deployed-on-mgmt-cluster"
+#  unit templates)
+unit_kustomization_spec_default:
+  kubeConfig:
+    secretRef:
+      name: '{{ .Values.cluster.name }}-kubeconfig'
+  targetNamespace: sylva-system  # (in workload cluster)
+
+# for units that rely on Helm, the Kustomization will
+# produce a HelmRelease which needs to be in the workload cluster ns
+# in the mgmt cluster, so we "reset" the targetNamespace and kubeconfig
+# set right above and .... (more below ...)
+unit_helmrelease_kustomization_spec_default:
+  kubeConfig: null
+  targetNamespace: '{{ .Release.Namespace }}'  # (in mgmt cluster)
+
+# ... and it's at the level of the HelmRelease that we ensure
+# that the Helm release is deployed in the workload cluster
+# (in sylva-system ns)
+unit_helmrelease_spec_default:
+  kubeConfig:
+    secretRef:
+      name: '{{ .Values.cluster.name }}-kubeconfig'
+  targetNamespace: sylva-system  # (in workload cluster)
+  storageNamespace: sylva-system  # (in workload cluster)
+
+
+unit_templates:
+
+  base-deps:
+    # we put here the list of base units that most units will need to depend on
+    # they correspond to "the workload cluster is ready for stuff to be deployed on it"
+    depends_on:
+      cluster-reachable: true
+      namespace-defs: true
+      calico: '{{ tuple . "calico" | include "unit-enabled" }}'
+
+  # used for units which are deployed on mgmt cluster itself
+  kustomization-deployed-on-mgmt-cluster:
+    # the resources produced by this Kustomization will live in the mgmt cluster
+    # so we override what is defined in unit_kustomization_spec_default
+    kustomization_spec:
+      kubeConfig: null
+      targetNamespace: null
+
+  helmrelease-deployed-on-mgmt-cluster:
+    helmrelease_spec:
+      # the resources produced by this HelmRelease will live in the mgmt cluster:
+      # so we override what is defined in unit_helmrelease_spec_default
+      kubeConfig: null
+      targetNamespace: '{{ .Release.Namespace }}'  # (in mgmt cluster)
+      storageNamespace: '{{ .Release.Namespace }}'  # (in mgmt cluster)
+
+
+# here we select which units we want to enable for a workload cluster
+units:
+  capo-cluster-resources:
+    enabled: on
+    unit_templates:
+    - kustomization-deployed-on-mgmt-cluster
+    depends_on:
+      # the heat-operator that we depend on is not in the per-cluster namespace
+      heat-operator: false
+      sylva-system/heat-operator: true
+    kustomization_spec:
+      # heatstack parameters specific to workload clusters:
+      _patches:
+        - target:
+            kind: HeatStack
+          patch: |
+            - op: replace
+              path: /spec/heatStack/template/parameters/common_sg_rules
+              value:
+                type: json
+                description: "Common security group rules associated with the control plane and worker VMs"
+                default:
+                  direction: [ingress, ingress, ingress, egress]
+                  port: ['80', '443', '22', '53']
+                  protocol: [tcp, tcp, tcp, udp]
+                  remote_ip_prefix: [0.0.0.0/0, 0.0.0.0/0, 0.0.0.0/0, 0.0.0.0/0]
+
+  os-images-info:
+    enabled: true
+    unit_templates:
+    - kustomization-deployed-on-mgmt-cluster
+
+  get-openstack-images:
+    enabled: true
+    unit_templates:
+    - kustomization-deployed-on-mgmt-cluster
+
+  cluster:
+    enabled: true
+    unit_templates:
+    - helmrelease-deployed-on-mgmt-cluster
+    depends_on:
+
+      # contrarily to what we have in default values, we don't
+      # depend on CAPI-related units deployed by _this_ sylva-units Helm release
+      # (because this release only deploys manifests for a given workload cluster)
+      capi: false
+      '{{ .Values.cluster.capi_providers.infra_provider }}': false
+      '{{ .Values.cluster.capi_providers.bootstrap_provider }}': false
+      '{{ .Values._internal.metal3_unit }}': false
+
+      # we need to wait for the CAPI-related units from the main sylva-units release
+      sylva-system/capi: true
+      sylva-system/{{ .Values.cluster.capi_providers.infra_provider }}: true
+      sylva-system/{{ .Values.cluster.capi_providers.bootstrap_provider }}: true
+      sylva-system/{{ .Values._internal.metal3_unit }}: '{{ .Values.cluster.capi_providers.infra_provider | eq "capm3" }}'
+
+
+  cluster-reachable:
+    enabled: true
+    unit_templates:
+    - kustomization-deployed-on-mgmt-cluster
+    - dummy
+
+  namespace-defs:
+    enabled: true
+    depends_on:
+      # some dependencies of base-deps are inherited, but don't apply here:
+      namespace-defs: false
+      calico: false
+    kustomization_spec:
+      targetNamespace: null  # if we don't do this, there are errors because namespaces are a non-namespaced resource
+
+  calico-crd:
+    enabled: true
+    depends_on:
+      calico: false  # cancel the dependency on calico inherited from base-deps
+
+  tigera-clusterrole:
+    enabled: true
+    depends_on:
+      calico: false  # cancel the dependency on calico inherited from base-deps
+
+  calico:
+    enabled: true
+    depends_on:
+      # some dependencies of base-deps are inherited, but don't apply here:
+      namespace-defs: false
+      calico: false
+
+  harbor-init:
+    enabled: false
+
+  harbor:
+    # can be enabled at runtime if desired
+    enabled: false
+
+  metallb:
+    enabled: true
+
+  ingress-nginx:
+    enabled: true
+    depends_on:
+      capo-cluster-resources: '{{ .Values.cluster.capi_providers.infra_provider | eq "capo" }}'
+    helmrelease_spec:
+      values:
+        controller:
+          service:
+            externalIPs: '{{ tuple (list .Values.cluster_virtual_ip) (not (.Values.cluster.capi_providers.infra_provider | eq "capo")) | include "set-only-if" }}'
+      valuesFrom:
+        - kind: ConfigMap
+          name: capo-cluster-resources
+          valuesKey: allocated_ip
+          targetPath: controller.service.externalIPs[0]
+          optional: '{{ not (.Values.cluster.capi_providers.infra_provider | eq "capo") | include "as-bool" }}'
+
+  monitoring-crd:
+    enabled: true
+
+  monitoring:
+    enabled: true
+    depends_on:
+      sylva-system/rancher-monitoring-clusterid-inject: '{{ tuple . "sylva-system/rancher-monitoring-clusterid-inject" | include "unit-enabled" }}'
+      cluster-import: '{{ tuple . "cluster-import" | include "unit-enabled" }}'
+
+  kubevirt:
+    # can be enabled at runtime if desired
+    enabled: false
+
+  kubevirt-test-vms:
+    enabled: false
+
+  longhorn-crd:
+    enabled: true
+
+  longhorn:
+    # can be enabled at runtime if desired
+    enabled: false
+
+  multus:
+    # can be enabled at runtime if desired
+    enabled: false
+
+  multus-ready:
+    enabled: true
+
+  sriov:
+    # can be enabled at runtime if desired
+    enabled: false
+
+  sriov-crd:
+    enabled: yes
+
+  sriov-resources:
+    # can be enabled at runtime if desired
+    enabled: false
+
+  cinder-csi:
+    enabled: true
+
+  ceph-csi-cephfs:
+    enabled: false
+
+  kyverno:
+    enabled: true
+    # in mgmt cluster, kyverno is part of base-deps, so cannot depend on itself, but here in workload-cluster we need it
+    unit_templates:
+    - base-deps
+
+  cluster-import:
+    enabled: false  # overriden depending on whether Rancher is enabled or not (eg. via shared-workload-clusters-settings)
+    info:
+      description: imports workload cluster into Rancher
+      internal: true
+    unit_templates:
+    - kustomization-deployed-on-mgmt-cluster
+    depends_on:
+      sylva-system/rancher: true  # depends on rancher unit in sylva-system ns
+      sylva-system/capi-rancher-import: true  # depends on capi-rancher-import unit in sylva-system ns
+      sylva-system/cluster-creator-login: true
+      sylva-system/cluster-creator-policy: true
+    repo: sylva-core
+    kustomization_spec:
+      # this Kustomization lives in the mgmt cluster
+      # **and it needs a specific kubeconfig to make a clean Rancher import**
+      kubeConfig:
+        secretRef:
+          name: cluster-creator-kubeconfig
+          key: kubeconfig
+      targetNamespace: '{{ .Release.Namespace }}'  # (in mgmt cluster)
+      wait: false
+      path: ./kustomize-units/cluster-import
+      postBuild:
+        substitute:
+          CLUSTER_FLAVOR: '{{ upper .Values.cluster.capi_providers.bootstrap_provider }} {{ upper .Values.cluster.capi_providers.infra_provider }}'
+          CLUSTER_NAME: '{{ .Values.cluster.name }}'
+        substituteFrom:
+          - kind: Secret
+            name: cluster-creator-kubeconfig
+      healthChecks:
+        # this resource is created by capi-rancher-import based on the existence of
+        # the Cluster.provisioning.cattle.io produced by the kustomization
+        - apiVersion: kustomize.toolkit.fluxcd.io/v1beta2
+          kind: Kustomization
+          name: "cattle-agent-{{ .Values.cluster.name }}"
+          namespace: '{{ .Release.Namespace }}'
+        # this resource would be checked by "wait: true" but we have
+        # to check it explicitly because we use `healthChecks` which implies `wait: false`
+        - apiVersion: provisioning.cattle.io/v1
+          kind: Cluster
+          name: "{{ .Values.cluster.name }}-capi"
+          namespace: '{{ .Release.Namespace }}'
+
+  vsphere-cpi:
+    enabled: true
+    # setting the same dependencies of the capv cluster unit in order to run in parallel
+    depends_on:
+      sylva-system/capi: true
+      sylva-system/capv: true
+      'sylva-system/{{ .Values.cluster.capi_providers.bootstrap_provider }}': true
+
+  vsphere-csi-driver:
+    enabled: true
+
+  logging-crd:
+    enabled: true
+
+  logging:
+    enabled: false
+
+  logging-config:
+    enabled: true
+    depends_on:
+      sylva-system/loki: true
+    kustomization_spec:
+      targetNamespace: "cattle-logging-system"
+
+  sylva-prometheus-rules:
+    enabled: true
+
+_internal:
+  # for capm3 the os-image-info configmap is copied by kyverno from main sylva-units release, corresponding to what os-image-server will serve
+  # for capo the os-image-info configmap is re-generated by os-image-info unit
+  os_images_info_configmap:
+    '{{ .Values.cluster.capi_providers.infra_provider | eq "capm3" | ternary "kyverno-cloned-os-images-info-capm3" .Values._internal.default_os_images_info_configmap }}'

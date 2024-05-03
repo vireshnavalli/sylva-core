@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vbmh
+spec:
+  replicas: ${NODE_COUNT:-1}
+  serviceName: libvirt-metal
+  selector:
+    matchLabels:
+      app: libvirt-metal
+  template:
+    metadata:
+      labels:
+        app: libvirt-metal
+      annotations:
+        k8s.v1.cni.cncf.io/networks: provisioning,management
+    spec:
+      containers:
+      - name: vbmh
+        image: ${NODE_IMAGE}
+        securityContext:
+          privileged: true
+        env:
+        - name: NODE_MEM_GB
+          value: "${NODE_MEM_GB:-4}"
+        - name: NODE_CPUS
+          value: "${NODE_CPUS:-4}"
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - mountPath: /dev/kvm
+          name: kvm-dev
+        livenessProbe:
+          httpGet:
+            path: /redfish/v1/Systems/4347b19b-67d0-4f0f-befe-114c0648af0a
+            port: 8000
+            scheme: HTTPS
+            httpHeaders:
+            - name: Authorization
+              # Use the bmc password defined in libvirt-metal container image
+              # See https://gitlab.com/sylva-projects/sylva-elements/container-images/libvirt-metal/-/blob/0.1.0/Dockerfile?ref_type=tags#L9
+              value: "Basic YWRtaW46Ym1jcGFzcw=="
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /redfish/v1/Systems/4347b19b-67d0-4f0f-befe-114c0648af0a
+            port: 8000
+            scheme: HTTPS
+            httpHeaders:
+            - name: Authorization
+              # Use the bmc password defined in libvirt-metal container image
+              # See https://gitlab.com/sylva-projects/sylva-elements/container-images/libvirt-metal/-/blob/0.1.0/Dockerfile?ref_type=tags#L9
+              value: "Basic YWRtaW46Ym1jcGFzcw=="
+      volumes:
+      - name: kvm-dev
+        hostPath:
+          path: /dev/kvm
+          type: CharDevice
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: libvirt-metal
+  labels:
+    app: libvirt-metal
+spec:
+  clusterIP: None
+  selector:
+    app: libvirt-metal
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000

@@ -1,0 +1,154 @@
+# This values file is meant to be used when deploying Sylva from OCI registry artifacts.
+#
+# NOTE WELL: This file is NOT usable as-is !
+#
+# For a deployment from OCI registry artifacts, the sylva-units Helm chart
+# must be deployed from the OCI artifact built by a tool (tools/oci/build-sylva-units-artifact.sh)
+# which augments this file to override Helm-based units definition to let them
+# use OCI artifacts.
+#
+# In such a context the 'sylva-units' chart is deployed from an OCI registry artifact
+# built by tools/oci/build-sylva-units-artifact.sh, and this tool also
+# populates this file so that all external sources definitions (from source_templates and helm_repo_url)
+# will point to OCI Registry artifacts.
+#
+#
+# ************************ Helm-based units relying on 'helm_repo_url' *********
+#
+# for those units, we just need to override the URL with the OCI registry URL
+#
+# Example:
+#
+# Unit definition:
+#
+#   cert-manager:
+#     enabled: yes
+#     helm_repo_url: https://charts.jetstack.io
+#     helmrelease_spec:
+#     chart:
+#       spec:
+#         chart: cert-manager
+#         version: v1.11.0
+#
+# Produced override to use the OCI registry:
+#
+#    cert-manager:
+#      helm_repo_url: '{{ .Values.sylva_core_oci_registry }}'
+#
+#
+# ************************* Helm-based units relying on 'repo' *********
+#
+# For such units, we:
+# * replace 'repo: xxx' by 'helm_repo_url'
+# * inject the version found in source_templates.xxx.spec.ref.tag into the unit helmrelease_spec.chart.spec.version
+#
+# Example:
+#
+# For unit 'local-path-provisioner'...
+#
+# source_templates:
+#   local-path-provisioner:
+#     kind: GitRepository
+#     spec:
+#       url: https://github.com/rancher/local-path-provisioner.git
+#       ref:
+#         tag: v0.0.23
+# units:
+#   local-path-provisioner:
+#     enabled: yes
+#     repo: local-path-provisioner
+#     helmrelease_spec:
+#       chart:
+#         spec:
+#           chart: deploy/chart/local-path-provisioner
+#
+# ...We produce this override:
+#
+#   local-path-provisioner:
+#     repo: null
+#     helm_repo_url: '{{ .Values.sylva_core_oci_registry }}'
+#     helmrelease_spec:
+#       chart:
+#         spec:
+#           chart: local-path-provisioner
+#           version: v0.0.23
+
+_internal:
+  # we need to remove the commit id suffix from .Chart.Version
+  sylva_core_version: '{{ regexReplaceAll "[+][0-9]+$" .Chart.Version "" }}'
+
+source_templates:
+
+  sylva-core:
+    existing_source: null
+    kind: OCIRepository
+    spec:
+      url: '{{ .Values.sylva_core_oci_registry }}/kustomize-units'
+      ref:
+        # by default, for the kustomize-units OCI artifact, we use the same
+        # tag as the one used for the sylva-units Helm chart
+        # (.Chart.Version is the chart version followed by "+<n>" with <n> being
+        # the Helm release iteration, so we need to remove it)
+        branch: '{{ tuple "(unused)" false | include "set-only-if" }}'  # hack to ensure that this field is absent from the manifest we build (see https://gitlab.com/sylva-projects/sylva-core/-/merge_requests/472#note_1530500014)
+        tag: '{{ .Values._internal.sylva_core_version }}'
+
+  capi-rancher-import:
+    kind: OCIRepository
+    spec:
+      # in OCI deployment, this is only used for 'cattle_agent_kustomize_source' below
+      # we piggyback on the 'url' field here to make it easily tunable
+      #
+      # this URL can be overridden for a deployment to point to an OCI registry
+      # other than the one derived from sylva_base_oci_registry
+      url: '{{ .Values.sylva_base_oci_registry }}/sylva-elements/helm-charts/capi-rancher-import/cattle-kustomize'
+
+unit_templates:
+  sylva-units:  # this applies to any unit having "unit_templates: ... - sylva-units"
+    repo: null
+    helm_repo_url: '{{ .Values.sylva_core_oci_registry }}'
+    helmrelease_spec:
+      chart:
+        spec:
+          version: '{{ .Values._internal.sylva_core_version }}'
+
+units:
+  capi-rancher-import:
+    helmrelease_spec:
+      values:
+        conf:
+          cattle_agent_kustomize_source_ref: '{"encapsulated-result": none}'  # trick to pass null to capi-rancher-chart without sylva-units value processing to do the special processing of 'null' resulting in removing the key from the dict
+          cattle_agent_kustomize_source:
+            apiVersion: source.toolkit.fluxcd.io/v1beta2
+            kind: OCIRepository
+            spec: '{{ mergeOverwrite .Values.oci_repo_spec_default (deepCopy (dig "capi-rancher-import" "spec" "undefined spec" .Values.source_templates)) | include "preserve-type" }}'
+          cattle_agent_kustomize_path: .
+
+  flux-system:
+    kustomization_spec:
+      _patches:
+        # for OCI-based deployments, we don't need nor want the Kustomization controller to use an HTTP proxy
+        - patch: |
+            kind: Deployment
+            apiVersion: apps/v1
+            metadata:
+              name: kustomize-controller
+              namespace: flux-system
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: manager
+                      env:
+                        - name: http_proxy
+                          $patch: delete
+                        - name: https_proxy
+                          $patch: delete
+
+cluster:
+  # we need metallb installation done from RKE2 manifests specified in RKE2ControlPlane
+  # to use an OCI artifact as well:
+  metallb_helm_oci_url: '{{ .Values.sylva_base_oci_registry }}/sylva-core/metallb'
+  metallb_helm_extra_ca_certs: '{{ .Values.oci_registry_extra_ca_certs | include "set-if-defined" }}'
+###########################################################################################################
+#### actual content produced at OCI-artifact buildind time by tools/oci/build-sylva-units-artifact.sh  ####
+###########################################################################################################

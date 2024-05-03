@@ -1,0 +1,47 @@
+---
+
+units:
+  # Disabling some units for lightweight deployment testing
+  cluster-creator-policy:
+    enabled: false
+  monitoring:
+    enabled: false
+  keycloak:
+    enabled: false
+  flux-webui:
+    enabled: false
+  capi-rancher-import:
+    enabled: false
+  kyverno:
+    enabled: false
+  shared-workload-clusters-settings:
+    enabled: false
+  harbor:
+    enabled: false
+
+cluster:
+  capd:
+    image_name: registry.gitlab.com/sylva-projects/sylva-elements/container-images/rke2-in-docker:v1-24-12-rke2r1
+  capi_providers:
+    infra_provider: capd
+    bootstrap_provider: cabpr
+
+  # CAPD only supports 1 CP machine
+  control_plane_replicas: 1
+
+capd_docker_host: unix:///var/run/docker.sock  # dynamically replaced in CI
+
+cluster_virtual_ip: # use the .100 (or any other that wouldn't be assigned by Docker) IP from the local kind subnet, returned by: docker network inspect -f '{{json .}}' kind | jq -r .IPAM.Config[0].Subnet
+
+proxies:
+  # put your own proxy settings here if you need
+  http_proxy: ""
+  https_proxy: ""
+  no_proxy: ""
+
+# configure containerd registry mirrors following https://github.com/containerd/containerd/blob/main/docs/hosts.md
+# see charts/syla-units/values.yaml for a more detailled example
+# registry_mirrors:
+#   hosts_config:
+#     docker.io:
+#     - mirror_url: http://your.mirror/docker

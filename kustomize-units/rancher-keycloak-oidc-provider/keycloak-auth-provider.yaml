@@ -1,0 +1,18 @@
+---
+apiVersion: management.cattle.io/v3
+kind: AuthConfig
+metadata:
+  name: keycloakoidc
+  annotations:
+    management.cattle.io/auth-provider-cleanup: unlocked
+accessMode: unrestricted
+authEndpoint: "https://${KEYCLOAK_EXTERNAL_URL}/realms/sylva/protocol/openid-connect/auth"
+clientId: rancher
+clientSecret: cattle-global-data:keycloakoidcconfig-clientsecret
+creatorId: admin
+enabled: true
+issuer: "https://${KEYCLOAK_EXTERNAL_URL}/realms/sylva"
+rancherUrl: "https://${RANCHER_EXTERNAL_URL}/verify-auth"
+scope: openid profile email
+type: keyCloakOIDCConfig
+groupSearchEnabled: true

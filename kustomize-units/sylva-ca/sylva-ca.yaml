@@ -1,0 +1,31 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: sylva-selfsigned-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  duration: 25920h  # 25920h is approx. 3 years
+  commonName: Sylva CA
+  secretName: ca-key-pair
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  subject:
+    organizations:
+    - Sylva
+    countries:
+    - eu
+    organizationalUnits:
+    - DEV
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io

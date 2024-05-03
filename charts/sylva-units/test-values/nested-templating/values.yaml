@@ -1,0 +1,93 @@
+units:
+
+  foo:
+    info:
+      description: fooo
+    repo: sylva-core
+    unit_templates: []
+    enabled: '{{ 4 | eq 4 }}'
+    kustomization_spec:
+      path: dummy-one
+      wait: true
+
+  bar:
+    info:
+      description: baaar
+    repo: sylva-core
+    unit_templates: []
+    enabled: '{{ .Values.units.foo.enabled }}'
+    kustomization_spec:
+      path: '{{ .Values.units.foo.kustomization_spec.path }}'
+      wait: true
+      substitute:
+        # returns b64 encoding of 'dummy-one', not base64 encoding of "{{ .Values.units.foo.kustomization_spec.path }}"
+        PASS: '{{ tuple . .Values.units.bar.kustomization_spec.path | include "interpret-as-string" | b64enc }}'
+
+  plop:
+    info:
+      description: plop
+    repo: sylva-core
+    unit_templates: []
+    enabled: '{{ not (tuple . .Values.units.foo.enabled | include "interpret-for-test") }}'
+    kustomization_spec:
+      path: dummy
+      wait: true
+
+  pif:
+    info:
+      description: pif
+    repo: sylva-core
+    unit_templates: []
+    enabled: yes
+    kustomization_spec:
+      path: dummy
+      wait: true
+
+  pof:
+    info:
+      description: pof
+    repo: sylva-core
+    unit_templates: []
+    enabled: yes
+    kustomization_spec:
+      path: dummy
+      wait: true
+
+  baz:
+    info:
+      description: pouf
+    repo: sylva-core
+    unit_templates: []
+    enabled: yes
+    depends_on:
+      bar: '{{ .Values.units.foo.enabled }}'  # true
+      pif: '{{ .Values.units.plop.enabled }}'  # false
+      foo: '{{ not (tuple . .Values.units.plop.enabled | include "interpret-for-test") }}'  # true
+      pof: '{{ not (tuple . .Values.units.pof.enabled | include "interpret-for-test") }}'  # false
+    kustomization_spec:
+      path: dummy
+      wait: true
+
+  bang:
+    info:
+      description: bang
+    repo: sylva-core
+    unit_templates: []
+    enabled: yes
+    depends_on:
+      # the 'and' below evaluates as 'and "" "true"' (thank you golang/template!) ... as ""
+      # this test ensure that our code is ready to cope with that (interpret-as-bool needs to translate "" as false)
+      foo: '{{ and (tuple . .Values.units.plop.enabled | include "interpret-for-test") (tuple . .Values.units.pif.enabled | include "interpret-for-test") }}'  # false
+    kustomization_spec:
+      path: dummy
+      wait: true
+
+  test-boolean:
+    info:
+      description: test
+    repo: sylva-core
+    unit_templates: []
+    kustomization_spec:
+      postBuild:
+        substitute:
+          thisIsABoolean: '{{ not (tuple . .Values.units.bang.enabled | include "interpret-for-test") | include "as-bool" }}'

@@ -1,0 +1,14 @@
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: AuthEngineMount
+metadata:
+  name: oidc
+  namespace: vault
+spec:
+  connection:
+    tLSConfig:
+      skipVerify: true # see https://gitlab.com/sylva-projects/sylva-core/-/issues/261
+    address: https://vault.vault.svc.cluster.local:8200
+  authentication:
+    path: kubernetes
+    role: admin
+  type: oidc

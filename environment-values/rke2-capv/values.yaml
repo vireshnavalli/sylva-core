@@ -1,0 +1,55 @@
+---
+cluster:
+  control_plane_replicas: 1
+
+  capi_providers:
+    infra_provider: capv
+    bootstrap_provider: cabpr
+
+  capv:
+    image_name: "tpl-ubuntu-2204-rke2-v1.24.12+rke2r1"
+    dataCenter: # Datacenter to use
+    networks:
+      default:
+        networkName: # VSphere default network for VMs and CSI
+    server: # VSphere server dns name
+    # dataStore: # VSphere datastore name
+    tlsThumbprint: # VSphere https TLS thumbprint
+    ssh_key: # SSH public key for VM access
+    folder: # VSphere folder
+    resourcePool: # VSphere resoucepool
+    # storagePolicyName: # VSphere storage policy name
+
+  machine_deployments:
+    md0:
+      replicas: 3
+      # network_interfaces:
+      #   additional:
+      #     networkName:
+      #     dhcp4:
+      capv:
+        numCPUs: 4
+        memoryMiB: 8192
+        diskGiB: 40
+
+cluster_virtual_ip: # replace me
+
+proxies:
+  # put your own proxy settings here if you need
+  http_proxy: ""
+  https_proxy: ""
+  no_proxy: ""
+
+# configure containerd registry mirrors following https://github.com/containerd/containerd/blob/main/docs/hosts.md
+# see charts/syla-units/values.yaml for a more detailled example
+# registry_mirrors:
+#   hosts_config:
+#     docker.io:
+#     - mirror_url: http://your.mirror/docker
+
+# add ntp servers if you need
+ntp:
+  enabled: false
+  servers:
+  # - 1.2.3.4
+  # - 1.2.3.5

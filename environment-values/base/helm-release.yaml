@@ -1,0 +1,59 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: sylva-core
+  labels:
+    copy-from-bootstrap-to-management: ""
+spec:
+  interval: 120m
+  ref:
+    commit: CURRENT_COMMIT # Placeholder that will be replaced by bootstrap.sh and apply.sh commands
+  url: SYLVA_CORE_REPO
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta2
+kind: HelmRelease
+metadata:
+  name: sylva-units
+spec:
+  chart:
+    spec:
+      sourceRef:
+        kind: GitRepository
+        name: sylva-core
+      chart: charts/sylva-units
+      reconcileStrategy: Revision
+      valuesFiles:
+        - charts/sylva-units/values.yaml
+        - charts/sylva-units/management.values.yaml
+  interval: 10m0s
+  valuesFrom:
+  - kind: Secret
+    name: sylva-units-secrets
+    valuesKey: secrets
+  - kind: ConfigMap
+    name: sylva-units-values
+    valuesKey: values
+  - kind: ConfigMap
+    name: capo-cluster-resources
+    valuesKey: allocated_ip
+    targetPath: cluster_virtual_ip
+    optional: true
+  - kind: ConfigMap
+    name: capo-cluster-resources
+    valuesKey: allocated_fip
+    targetPath: openstack.floating_ip
+    optional: true
+    # Optional configMap used to save public endpoint
+    # (used when it is determined dynamically in bootstrap for libvirt-metal)
+  - kind: ConfigMap
+    name: cluster-public-endpoint
+    valuesKey: endpoint
+    targetPath: cluster_public_endpoint
+    optional: true
+  values:
+    source_templates:
+      sylva-core:
+        existing_source:
+          name: sylva-core
+          kind: GitRepository

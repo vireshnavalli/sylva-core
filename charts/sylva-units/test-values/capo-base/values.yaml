@@ -1,0 +1,30 @@
+cluster:
+
+  capi_providers:
+    infra_provider: capo
+
+  capo:
+    image_key: foo-image
+    ssh_key_name: mykey
+    network_id: c00lf00l-0000-1111-2222-baaaadc0ffee
+    clouds_yaml:
+      clouds:
+        capo_cloud:
+          verify: yes
+          auth:
+            project_name: foo
+            username: foo
+            password: bar
+            auth_url: https://1.2.3.4
+            user_domain_name: foo
+            project_domain_name: foo
+          region_name: RegionOne
+
+  control_plane:
+    capo:
+      server_group_id: c00lf00l-0000-1111-2222-baaaadc0ffee
+
+openstack:
+  storageClass:
+    type: my-cinder-volume-type
+

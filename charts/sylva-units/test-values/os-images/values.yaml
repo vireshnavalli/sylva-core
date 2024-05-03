@@ -1,0 +1,18 @@
+
+os_images:
+  valid-image-name:
+    uri: "oci://my-media-server/my-image:0.0.1"
+    filename: my-image.raw
+    checksum: 26f00b28d60bf13958ccceb08002286056a4d255b4ccdc81f4d12ec711dc4ca4
+  invalid.image.name.with.dots:
+    uri: "oci://my-media-server/my-image:0.0.1"
+    filename: my-image.raw
+    checksum: 26f00b28d60bf13958ccceb08002286056a4d255b4ccdc81f4d12ec711dc4ca4
+  valid-long-image-name-52chars-0123456789012345678901:
+    uri: "oci://my-media-server/my-image:0.0.1"
+    filename: my-image.raw
+    checksum: 26f00b28d60bf13958ccceb08002286056a4d255b4ccdc81f4d12ec711dc4ca4
+  too-long-image-name-53chars-0123456789012345678901234:
+    uri: "oci://my-media-server/my-image:0.0.1"
+    filename: my-image.raw
+    checksum: 26f00b28d60bf13958ccceb08002286056a4d255b4ccdc81f4d12ec711dc4ca4

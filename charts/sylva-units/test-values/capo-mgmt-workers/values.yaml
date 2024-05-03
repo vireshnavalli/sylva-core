@@ -1,0 +1,6 @@
+cluster:
+  machine_deployments:
+    md0:
+      replicas: 42
+      capo:
+        failure_domain: nova-worker-az

@@ -1,0 +1,10 @@
+units_override_enabled:
+  # the enablement of 'cert-manager' unit is made conditional, the templating below has to be evaluated
+  # before units_override_enabled is read by the code processing 'enabled_conditions'
+  - '{{ tuple "cert-manager" (eq 42 42) | include "set-only-if" }}'
+
+_internal:
+  test: >-
+    {{ if not (tuple . "cert-manager" | include "unit-enabled") }}
+      {{ fail "UNIT TEST FAILURE: cert-manager should be considered enabled"}}
+    {{ end }}

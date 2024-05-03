@@ -1,0 +1,60 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: shared-workload-clusters-setttings
+spec:
+  rules:
+  - name: generate-cm
+    match:
+      any:
+      - resources:
+          kinds:
+          - Namespace
+          selector:
+            matchLabels:
+              sylva-project.org/shared-workload-cluster-settings: ""
+    generate:
+      kind: ConfigMap
+      apiVersion: v1
+      name: shared-workload-clusters-settings
+      namespace: "{{request.object.metadata.name}}"
+      synchronize: true
+      clone:
+        name: shared-workload-clusters-settings
+        namespace: sylva-system
+  - name: clone-os-images-info
+    match:
+      any:
+      - resources:
+          kinds:
+          - Namespace
+          selector:
+            matchLabels:
+              sylva-project.org/shared-workload-cluster-settings: ""
+    generate:
+      kind: ConfigMap
+      apiVersion: v1
+      name: kyverno-cloned-os-images-info-capm3
+      namespace: "{{request.object.metadata.name}}"
+      synchronize: true
+      clone:
+        name: ${OS_IMAGES_INFO_CM}
+        namespace: sylva-system
+  - name: generate-secret
+    match:
+      any:
+      - resources:
+          kinds:
+          - Namespace
+          selector:
+            matchLabels:
+              sylva-project.org/shared-workload-cluster-settings: ""
+    generate:
+      kind: Secret
+      apiVersion: v1
+      name: shared-workload-clusters-settings
+      namespace: "{{request.object.metadata.name}}"
+      synchronize: true
+      clone:
+        name: shared-workload-clusters-settings
+        namespace: sylva-system

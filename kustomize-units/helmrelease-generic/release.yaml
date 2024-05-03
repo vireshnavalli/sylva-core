@@ -1,0 +1,13 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta2
+kind: HelmRelease
+metadata:
+  name: placeholder
+spec: {}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: helm-unit-values-placeholder
+data:
+  values: ${VALUES_B64}

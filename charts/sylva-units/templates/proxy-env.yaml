@@ -1,0 +1,12 @@
+{{- $envAll := set . "Values" (include "interpret-values-gotpl" . | fromJson) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxy-env-vars
+  labels:
+{{ include "sylva-units.labels" $envAll | indent 4 }}
+data:
+{{- range tuple "http_proxy" "https_proxy" }}
+  {{ . }}: {{ get $envAll.Values.proxies . | quote }}
+{{- end }}
+  no_proxy: {{ include "sylva-units.no_proxy" (tuple .) | quote }}

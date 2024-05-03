@@ -1,0 +1,287 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "prConcurrentLimit": 0,
+  "labels": [
+    "run-e2e-tests",
+    "renovate"
+  ],
+  "gitlabci": {
+    "fileMatch": [
+      "\\.gitlab/ci/.*.yml"
+    ]
+  },
+  "kubernetes": {
+    "fileMatch": [
+      "kustomize-units/.+\\.yaml"
+    ],
+    "ignorePaths": [
+      "kustomize-units/**/kustomization.yaml"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "Allow renovate self-update only once a week",
+      "matchPackageNames": ["renovate-bot/renovate-runner"],
+      "groupName": "renovate",
+      "schedule": ["before 4am on monday"]
+    },
+    {
+      "description": "Regroup vsphere-cloud-controller-manager updates",
+      "matchFileNames": ["kustomize-units/vsphere-cloud-controller-manager/**"],
+      "matchPackagePrefixes": [
+        "gcr.io/cloud-provider-vsphere/csi/release",
+        "quay.io/k8scsi"
+      ],
+      "groupName": "cloud-provider-vsphere"
+    },
+    {
+      "description": "Regroup vsphere-csi-driver updates",
+      "matchFileNames": ["kustomize-units/vsphere-csi-driver/**"],
+      "matchPackagePrefixes": [
+        "gcr.io/cloud-provider-vsphere/csi/release",
+        "quay.io/k8scsi"
+      ],
+      "groupName": "vsphere-csi-driver"
+    },
+    {
+      "description": "Regroup Calico updates",
+      "matchPackageNames": [
+        "rke2-calico",
+        "rke2-calico-crd"
+      ],
+      "versioning": "regex:^v(?<major>\\d+)(\\.(?<minor>\\d+))?(\\.(?<patch>\\d+))$",
+      "groupName": "rke2-calico"
+    },
+    {
+      "description": "Format rke2-ingress-nginx version",
+      "matchPackageNames": ["rke2-ingress-nginx"],
+      "versioning": "regex:^(?<major>\\d+)(\\.(?<minor>\\d+))?(\\.(?<patch>\\d+))$"
+    },
+    {
+      "description": "Format rke2-multus version",
+      "matchPackageNames": ["rke2-multus"],
+      "versioning": "regex:^v(?<major>\\d+)(\\.(?<minor>\\d+))?(\\.(?<patch>).*)$"
+    },
+    {
+      "description": "Regroup rancher-cis-benchmark updates",
+      "matchPackageNames": [
+        "rancher-cis-benchmark",
+        "rancher-cis-benchmark-crd"
+      ],
+      "groupName": "rancher-cis-benchmark"
+    },
+    {
+      "description": "Regroup rancher-monitoring updates",
+      "matchPackageNames": [
+        "rancher-monitoring",
+        "rancher-monitoring-crd"
+      ],
+      "groupName": "rancher-monitoring"
+    },
+    {
+      "description": "Regroup metallb updates",
+      "matchPackageNames": [
+        "metallb",
+        "metallb/metallb"
+      ],
+      "enabled": false,
+      "groupName": "metallb"
+    },
+    {
+      "description": "Regroup longhorn updates",
+      "matchPackageNames": [
+        "longhorn",
+        "longhorn-crd"
+      ],
+      "groupName": "longhorn"
+    },
+    {
+      "description": "Regroup sriov updates",
+      "matchPackageNames": [
+        "sriov",
+        "sriov-crd"
+      ],
+      "groupName": "sriov"
+    },
+    {
+      "description": "Format ironic version",
+      "matchPackageNames": ["ironic"],
+      "versioning": "regex:^capm3-v(?<major>\\d+)(\\.(?<minor>\\d+))?(\\.(?<patch>\\d+))$"
+    },
+    {
+      "description": "Regroup ironic and metal3 updates",
+      "matchPackageNames": [
+        "ironic",
+        "metal3-io/cluster-api-provider-metal3"
+      ],
+      "groupName": "metal3"
+    },
+    {
+      "description": "Prevent vault update to 1.14 due to licence issue",
+      "matchPackageNames": ["hashicorp/vault"],
+      "allowedVersions": "<1.14"
+    },
+    {
+      "description": "Prevent helm rancher update to over 103 due to compatibility issue with rancher 2.8",
+      "matchPackageNames": [
+        "rancher-monitoring-crd",
+        "rancher-monitoring",
+        "sriov-crd",
+        "sriov",
+        "longhorn-crd",
+        "longhorn"
+      ],
+      "allowedVersions": "<104"
+    },
+    {
+      "description": "Regroup workload-cluster-operator updates",
+      "matchPackagePatterns": ".*workload-cluster-operator.*",
+      "groupName": "workload-cluster-operator"
+    },
+    {
+      "description": "Regroup sylva-units-operator updates",
+      "matchPackagePatterns": ".*sylva-units-operator.*",
+      "groupName": "sylva-units-operator"
+    },
+    {
+      "description": "Regroup heat-operator updates",
+      "matchPackagePatterns": ".*heat-operator.*",
+      "groupName": "heat-operator"
+    },
+    {
+      "description": "Catch all changes related to values files and run generate_units_documentation script",
+      "matchFileNames": [
+        "**/**values.yaml",
+        "kustomize-units/**/**"
+      ],
+      "postUpgradeTasks": {
+        "commands": [
+          "pip install pyyaml",
+          "tools/generate_units_documentation.py"
+         ,"tools/generate_json_schema.py"
+        ],
+        "fileFilters": [
+          "charts/sylva-units/units-description.md"
+         ,"charts/sylva-units/values.schema.json"
+        ],
+        "executionMode": "update"
+      }
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Match docker image define in _IMAGE variables for gitlab-ci",
+      "customType": "regex",
+      "fileMatch": [".gitlab/ci/.*.yml"],
+      "matchStrings": [
+        "\\s+# renovate: datasource=(?<datasource>.*?)\\s+.*?_IMAGE: (?<registryUrl>.*?)\/(?<depName>.*?):(?<currentValue>.*)"
+      ],
+      "registryUrlTemplate": "https://{{{ registryUrl }}}"
+    },
+    {
+      "description": "Match github releases defined via a direct link in kustomizations",
+      "customType": "regex",
+      "fileMatch": "kustomization.y[a]?ml",
+      "matchStrings": ["https:\/\/github[.]com\/(?<depName>.*\/.*?)\/releases\/download\/(?<currentValue>.*?)\/"
+      ],
+      "datasourceTemplate": "github-releases"
+    },
+    {
+      "description": "Match github tags defined via a direct link in kustomizations",
+      "customType": "regex",
+      "fileMatch": "kustomization.y[a]?ml",
+      "matchStrings": [
+        "https:\/\/raw.githubusercontent.com\/(?<depName>[^\/]*\/[^\/]*)\/(?<currentValue>.*?)\/"
+      ],
+      "datasourceTemplate": "github-tags"
+    },
+    {
+      "description": "Match Helm charts in helm repository defined under units",
+      "customType": "regex",
+      "fileMatch": "charts/sylva-units/values.yaml",
+      "matchStringsStrategy": "recursive",
+      "matchStrings": [
+        "units:[\\w\\W]*[ ]+",
+        "\\n\\s+helm_repo_url:(?<registryUrl>.*)\\n[\\w\\W]*?chart: (?<depName>.*)\\n[\\w\\W]*?version: (?<currentValue>.*)\\n"
+      ],
+      "datasourceTemplate": "helm"
+    },
+    {
+      "description": "Match Sylva diskimagebuilder",
+      "customType": "regex",
+      "fileMatch": "charts/sylva-units/values.yaml",
+      "matchStrings": [
+        "#\\s?renovate: depName=(?<depName>.*?)\\n*?sylva_diskimagebuilder_version: (?<currentValue>.*)"
+      ],
+      "datasourceTemplate": "gitlab-tags"
+    },
+    {
+      "description": "Match images used by operators",
+      "customType": "regex",
+      "fileMatch": "charts/sylva-units/values.yaml",
+      "matchStringsStrategy": "recursive",
+      "matchStrings": [
+        "units:[\\w\\W]*[ ]+",
+        "\\n\\s+newName:\\s+(?<registryUrl>.*?)\/(?<depName>.*)\\n[\\w\\W]*?newTag:\\s+\"?(?<currentValue>[^\"\\n]+)\"?\\n"
+      ],
+      "registryUrlTemplate": "https://{{{ registryUrl }}}",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Match Helm charts in git repository defined under units",
+      "customType": "regex",
+      "fileMatch": "charts/sylva-units/values.yaml",
+      "matchStringsStrategy": "recursive",
+      "matchStrings": [
+        "source_templates:[\\w\\W]*[ ]+",
+        "\\n\\s+url:\\s(?<depName>.*)\\n[\\w\\W]*?(branch:|tag:) (?<currentValue>.*)\\n"
+      ],
+      "datasourceTemplate": "git-tags"
+    },
+    {
+      "description": "Generic match for docker images in values.yaml, looking for repository: / tag: pattern",
+      "customType": "regex",
+      "fileMatch": "charts/sylva-units/values.yaml",
+      "matchStrings": [
+        "\\s+repository:\\s+(?<registryUrl>.*)\/(?<depName>.*)\\n\\s+tag:\\s\"?(?<currentValue>[^\"\\n]+)\"?\\n"
+      ],
+      "registryUrlTemplate": "https://{{{ registryUrl }}}",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "Detect keycloak-realm-operator version",
+      "customType": "regex",
+      "datasourceTemplate": "docker",
+      "fileMatch": ["kustomize-units/keycloak-legacy-operator/kustomization.yaml"],
+      "matchStrings": [
+        "#\\s?renovate: registryUrl=(?<registryUrl>.*?) image=(?<depName>.*?)\\n[\\w\\W]*?newTag: (?<currentValue>[\\w+.-]*)"
+      ]
+    },
+    {
+      "description": "Detect vault docker image",
+      "customType": "regex",
+      "datasourceTemplate": "docker",
+      "fileMatch": ["vault.yaml"],
+      "matchStrings": [
+        "spec:\\n[\\w\\W]*?.*image: (?<depName>.*)\\:(?<currentValue>.*)"
+      ]
+    },
+    {
+      "description": "Detect Sylva-toolbox image in common.sh",
+      "customType": "regex",
+      "fileMatch": "tools/shell-lib/common.sh",
+      "matchStringsStrategy": "combination",
+      "matchStrings": [
+        "SYLVA_TOOLBOX_VERSION:-\"(?<currentValue>.*)\".",
+        "SYLVA_TOOLBOX_IMAGE:-(?<depName>.*).",
+        "SYLVA_BASE_OCI_REGISTRY:-(?<base_registryUrl>.*).",
+        "SYLVA_TOOLBOX_REGISTRY:-.*\/(?<uri_registryUrl>.*)."
+      ],
+      "registryUrlTemplate": "https://{{{ base_registryUrl }}}/{{{ uri_registryUrl }}}",
+      "datasourceTemplate": "docker"
+    }
+  ]
+}

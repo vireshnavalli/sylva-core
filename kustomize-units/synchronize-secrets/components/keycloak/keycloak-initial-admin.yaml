@@ -1,0 +1,25 @@
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+   name: keycloak-initial-admin
+   namespace: keycloak
+spec:
+   secretStoreRef:
+      name: vault
+      kind: ClusterSecretStore
+   refreshInterval: 0s
+   target:
+      creationPolicy: Orphan
+      name: keycloak-initial-admin
+      template:
+         type: kubernetes.io/basic-auth
+         data:
+            username: admin
+            password: "{{ .password | toString }}"
+   data:
+   - secretKey: password
+     remoteRef:
+        key: secret/data/keycloak
+        property: password
+#        version: "1"  # setting the version here should not be necessary if ExternalSecret.spec.refreshInterval: 0

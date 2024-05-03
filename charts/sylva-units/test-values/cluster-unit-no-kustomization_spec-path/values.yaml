@@ -1,0 +1,6 @@
+units:
+  cluster:
+    enabled: true
+    depends_on: null
+    kustomization_spec:
+      path: ./foo  # this should not be allowed because this unit is relying on Helm (which imposes that the Kustomization uses kustomize-units/helmrelease-generic)

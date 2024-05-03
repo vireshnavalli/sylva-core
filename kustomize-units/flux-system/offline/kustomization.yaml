@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - manifests.yaml
+
+components:
+  - ../components/common
+
+patches:
+  - patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --requeue-dependency=8s
+    target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/component in (kustomize-controller,helm-controller,source-controller)
+
+  # removing the notification controller is done just to make the bootstrap faster
+  # we don't remove it for the base manifests, to avoid spurious error logs
+  # in other Helm controllers when they try to push notifications
+  - target:
+      labelSelector: app.kubernetes.io/component=notification-controller
+    patch: |-
+      $patch: delete
+      kind: _unused_
+      metadata:
+        name: _unused_

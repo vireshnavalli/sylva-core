@@ -1,0 +1,59 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: merge-neuvector-secrets
+spec:
+  mutateExistingOnPolicyUpdate: true
+  rules:
+  - name: merge-neuvector-secrets
+    match:
+      resources:
+        kinds:
+        - Secret
+        names:
+        - neuvector-oidc-init
+        namespaces:
+        - neuvector
+    mutate:
+      targets:
+      - apiVersion: v1
+        kind: Secret
+        name: neuvector-init
+        namespace: neuvector
+      patchesJson6902: |-
+        - path: "/data/oidcinitcfg.yaml"
+          op: add
+          value: {{request.object.data.oidcinitcfg}}
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: add-sylva-ca
+spec:
+  rules:
+  - name: add-sylva-ca
+    match:
+      resources:
+        kinds:
+        - Deployment
+        names:
+        - neuvector-controller-pod
+        namespaces:
+        - neuvector
+    mutate:
+      patchStrategicMerge:
+        metadata:
+          labels:
+            name: "{{request.object.metadata.name}}"
+        spec:
+          template:
+            spec:
+              containers:
+                - name: neuvector-controller-pod
+                  volumeMounts:
+                    - name: keycloak-ca
+                      mountPath: /etc/ssl/certs
+              volumes:
+                - name: keycloak-ca
+                  secret:
+                    secretName: sylva-ca.crt

@@ -1,0 +1,24 @@
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: eso-flux-webui-oidc
+  namespace: flux-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: eso-store-k8s-keycloak
+  target:
+    name: oidc-auth # name of the k8s Secret to be created in the same namespace as ExternalSecret
+    template:
+      engineVersion: v2
+      data:
+        clientSecret: "{{ .clientSecret }}"
+        clientID: flux-webui
+        issuerURL: https://${KEYCLOAK_DNS}/realms/sylva
+        redirectURL: https://${FLUX_WEBUI_DNS}/oauth2/callback
+  data:
+    - secretKey: clientSecret
+      remoteRef:
+        key: keycloak-client-secret-flux-webui-client  # this secret is a byproduct of the flux-webui-client KeycloakClient resource
+        property: CLIENT_SECRET

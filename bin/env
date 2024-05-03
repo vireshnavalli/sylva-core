@@ -1,0 +1,41 @@
+#!/bin/bash
+
+if [[ -n "$BASH_VERSION" ]]; then
+  shell=bash
+  export PATH=$(dirname $(realpath "${BASH_SOURCE[0]}")):${PATH}
+elif [[ -n "$ZSH_VERSION" ]]; then
+  shell=zsh
+  export PATH=$(dirname $(realpath "${(%):-%N}")):${PATH}
+else
+  echo "shell wasn't autdetected"
+  return 0
+fi
+
+export FLUX_SYSTEM_NAMESPACE=sylva-system
+
+export CLUSTERCTL_DISABLE_VERSIONCHECK=true
+
+alias k=kubectl
+
+if command -v complete >/dev/null || command -v compdef >/dev/null; then
+  [ -x "$(command -v kubectl)" ] && source <(kubectl completion $shell)
+  [ -x "$(command -v clusterctl)" ] && source <(clusterctl completion $shell)
+  [ -x "$(command -v kind)" ] && source <(kind completion $shell)
+  [ -x "$(command -v flux)" ] && source <(flux completion $shell)
+  [ -x "$(command -v helm)" ] && source <(helm completion $shell)
+  [ -x "$(command -v virtctl)" ] && source <(virtctl completion $shell)
+  [ -x "$(command -v k9s)" ] && source <(k9s completion $shell)
+  [ -x "$(command -v cilium)" ] && source <(cilium completion $shell)
+  [ -x "$(command -v cosign)" ] && source <(cosign completion $shell)
+  [ -x "$(command -v crane)" ] && source <(crane completion $shell)
+  [ -x "$(command -v kustomize)" ] && source <(kustomize completion $shell)
+  [ -x "$(command -v yq)" ] && source <(yq shell-completion $shell)
+  if [[ $shell == "bash" ]]; then
+      complete -o default -F __start_kubectl k
+  elif [[ $shell == "zsh" ]]; then
+      compdef _kubectl k
+  fi
+fi
+
+alias get-sylva-values="kubectl get secrets sylva-units-values -o yaml | yq .data.values | base64 -d | yq"
+

@@ -1,0 +1,47 @@
+apiVersion: management.cattle.io/v3
+kind: GlobalRoleBinding
+metadata:
+  name: grb-infra-admins
+  annotations:
+    cleanup.cattle.io/grbUpgradeCluster: "true"
+    lifecycle.cattle.io/create.mgmt-auth-grb-controller: "true"
+  finalizers:
+  - controller.cattle.io/mgmt-auth-grb-controller
+globalRoleName: admin
+groupPrincipalName: keycloakoidc_group://infra-admins
+---
+apiVersion: management.cattle.io/v3
+kind: GlobalRoleBinding
+metadata:
+  name: grb-restricted-admins
+  annotations:
+    cleanup.cattle.io/grbUpgradeCluster: "true"
+    lifecycle.cattle.io/create.mgmt-auth-grb-controller: "true"
+  finalizers:
+  - controller.cattle.io/mgmt-auth-grb-controller
+globalRoleName: restricted-admin
+groupPrincipalName: keycloakoidc_group://infra-restricted-admins
+---
+apiVersion: management.cattle.io/v3
+kind: GlobalRoleBinding
+metadata:
+  name: grb-user
+  annotations:
+    cleanup.cattle.io/grbUpgradeCluster: "true"
+    lifecycle.cattle.io/create.mgmt-auth-grb-controller: "true"
+  finalizers:
+  - controller.cattle.io/mgmt-auth-grb-controller
+globalRoleName: user
+groupPrincipalName: keycloakoidc_group://infra-standard-users
+---
+apiVersion: management.cattle.io/v3
+kind: GlobalRoleBinding
+metadata:
+  name: grb-user-base
+  annotations:
+    cleanup.cattle.io/grbUpgradeCluster: "true"
+    lifecycle.cattle.io/create.mgmt-auth-grb-controller: "true"
+  finalizers:
+  - controller.cattle.io/mgmt-auth-grb-controller
+globalRoleName: user-base
+groupPrincipalName: keycloakoidc_group://infra-base-users

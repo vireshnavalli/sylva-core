@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shared-workload-clusters-settings
+  namespace: sylva-system
+data:
+  values: _placeholder_

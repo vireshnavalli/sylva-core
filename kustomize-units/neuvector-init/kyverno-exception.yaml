@@ -1,0 +1,25 @@
+apiVersion: kyverno.io/v2alpha1
+kind: PolicyException
+metadata:
+  name: neuvector-exception
+  namespace: neuvector
+spec:
+  exceptions:
+  - policyName: disallow-latest-tag
+    ruleNames:
+    - validate-image-tag
+    - autogen-validate-image-tag
+    - autogen-cronjob-validate-image-tag
+  match:
+    any:
+    - resources:
+        kinds:
+        - Pod
+        - Deployment
+        - ReplicaSet
+        - CronJob
+        namespaces:
+        - neuvector
+        names:
+        - neuvector-scanner*
+        - neuvector-updater*

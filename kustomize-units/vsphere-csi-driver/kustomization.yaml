@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: vmware-system-csi
+
+resources:
+  - namespace.yaml
+  - https://raw.githubusercontent.com/kubernetes-sigs/vsphere-csi-driver/v3.1.2/manifests/vanilla/vsphere-csi-driver.yaml
+  - storageClass.yaml
+  - vsphere-config-secret.yaml
+
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: vsphere-csi-controller
+      namespace: vmware-system-csi
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: ${CONTROLLER_REPLICAS}

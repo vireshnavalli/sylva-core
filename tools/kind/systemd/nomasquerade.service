@@ -1,0 +1,8 @@
+[Unit]
+Description=Prevent masquerading of libvirt-metal networks
+
+[Service]
+ExecStart=/usr/local/bin/iptables.sh
+
+[Install]
+WantedBy=multi-user.target

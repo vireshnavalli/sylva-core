@@ -1,0 +1,128 @@
+# the management cluster has all units defined in values.yaml
+# (except the ones explicitly set 'enabled: false' in values.yaml
+#  and not explicitely set 'enabled: false' here)
+units_enabled_default: true
+
+unit_templates:
+  # this unit template gather depends_on common
+  # to most units
+  base-deps:
+    depends_on:
+      # Flux, because starting unit reconciliation while Flux is
+      #       reinstalling itself proved fragile in the past
+      flux-system: true
+      # Kyverno, because we're introducing Kyverno policies that manage pod
+      #          security settings that need to be in place before things can start up
+      #kyverno: true
+
+units:
+
+  capd:
+    enabled: '{{ .Values.cluster.capi_providers.infra_provider | eq "capd" }}'
+
+  capo:
+    enabled: '{{ .Values.cluster.capi_providers.infra_provider | eq "capo" }}'
+
+  capm3:
+    enabled: '{{ .Values.cluster.capi_providers.infra_provider | eq "capm3" }}'
+
+  metal3:
+    enabled: '{{ (and (tuple . "capm3" | include "unit-enabled") (.Values.metal3.provider | eq "sylva")) }}'
+
+  metal3-suse:
+    enabled: '{{ (and (tuple . "capm3" | include "unit-enabled") (.Values.metal3.provider | eq "suse")) }}'
+
+  capv:
+    enabled: '{{ .Values.cluster.capi_providers.infra_provider | eq "capv" }}'
+
+  cabpk:  # kubeadm
+    enabled: '{{ .Values.cluster.capi_providers.bootstrap_provider | eq "cabpk" }}'
+
+  cabpr:  # RKE2
+    enabled: '{{ .Values.cluster.capi_providers.bootstrap_provider | eq "cabpr" }}'
+
+  os-image-server:
+    enabled: '{{ tuple . .Values._internal.metal3_unit | include "unit-enabled" }}'
+
+  kubevirt:
+    enabled: false
+
+  kubevirt-test-vms:
+    enabled: false
+
+  monitoring:
+    helmrelease_spec:
+      values:
+        global:
+          cattle:
+            clusterId: local
+    helm_secret_values:
+      grafana:
+        # https://grafana.com/docs/grafana/latest/administration/provisioning/#example-data-source-config-file
+        additionalDataSources:
+          - name: Thanos
+            type: "prometheus"
+            access: "proxy"
+            url: "https://{{ .Values.external_hostnames.thanos_query }}"
+            basicAuth: true
+            basicAuthUser: "thanos-user"
+            jsonData:
+              tlsSkipVerify: true
+            secureJsonData:
+              basicAuthPassword: '{{ .Values._internal.thanos_password }}'
+            #isDefault: true
+          - name: Loki
+            type: "loki"
+            access: "proxy"
+            url: "https://{{ .Values.external_hostnames.loki }}"
+            basicAuth: true
+            basicAuthUser: "loki-user"
+            jsonData:
+              tlsSkipVerify: true
+              httpHeaderName1: 'X-Scope-OrgID'
+            secureJsonData:
+              httpHeaderValue1: '{{ .Values.cluster.name }}'
+              basicAuthPassword: '{{ .Values._internal.loki_password }}'
+
+  logging:
+    depends_on:
+      loki: '{{ tuple . "loki" | include "unit-enabled" }}'
+
+  snmp-exporter:
+    enabled: '{{ tuple . "capm3" | include "unit-enabled" }}'
+
+  harbor-init:
+    depends_on:
+      sylva-ca: true
+      keycloak-resources: true
+      kyverno: true
+      vault: true
+      vault-config-operator: true
+      keycloak-add-client-scope: true
+
+  harbor:
+    helmrelease_spec:
+      _postRenderers:
+        - kustomize:
+            patchesStrategicMerge:
+              - kind: Deployment
+                apiVersion: apps/v1
+                metadata:
+                  name: harbor-core
+                spec:
+                  template:
+                    spec:
+                      containers:
+                        - name: core
+                          env:
+                            - name: CONFIG_OVERWRITE_JSON
+                              valueFrom:
+                                secretKeyRef:
+                                  key: CONFIG_OVERWRITE_JSON
+                                  name: "harbor-oidc"
+
+keycloak:
+  keycloak_expire_password_days: 30
+
+cluster:
+  prevent_deletion: true

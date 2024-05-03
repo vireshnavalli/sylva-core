@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+components:
+- ../oci-artifacts
+
+patches:
+  - target:
+      kind: HelmRelease
+      name: sylva-units
+    patch: |
+      - op: replace
+        path: /spec/chart/spec/valuesFiles/1
+        value: workload-cluster.values.yaml
+  - target:
+      kind: HelmRepository
+      name: sylva-core
+    patch: |
+      - op: replace
+        path: /metadata/namespace
+        value: WORKLOAD_CLUSTER_NAMESPACE

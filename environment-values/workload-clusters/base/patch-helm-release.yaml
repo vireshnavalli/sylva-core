@@ -1,0 +1,23 @@
+apiVersion: helm.toolkit.fluxcd.io/v2beta2
+kind: HelmRelease
+metadata:
+  name: sylva-units
+spec:
+  chart:
+    spec:
+      valuesFiles:
+        - charts/sylva-units/values.yaml
+        - charts/sylva-units/workload-cluster.values.yaml
+  valuesFrom:
+  - kind: Secret
+    name: shared-workload-clusters-settings
+    valuesKey: values
+  - kind: ConfigMap
+    name: shared-workload-clusters-settings
+    valuesKey: values
+  - kind: Secret
+    name: sylva-units-secrets
+    valuesKey: secrets
+  - kind: ConfigMap
+    name: sylva-units-values
+    valuesKey: values

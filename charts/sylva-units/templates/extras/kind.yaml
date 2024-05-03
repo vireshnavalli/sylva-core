@@ -1,0 +1,41 @@
+{{/*
+
+This template is used to generate registry configuration for kind following
+registry_mirrors configuration format used to configure clusters.
+
+Unfortunately, kind does not provide any option to add files to containers from yaml definition,
+if we want to use the new registry configuration format, the only option is to mount a directory on the host.
+
+
+This template will generate a shell script that can be used to populate that directory.
+In order to generate a valid yaml, it will be stored in the 'script' key. In order to generate it,
+you can call helm with following command:
+
+helm template kind-registry-config charts/sylva-units --show-only templates/extras/kind.yaml --values your-environment/registry-mirrors.yaml
+
+*/}}
+
+{{- if (eq .Release.Name "kind-registry-config") -}}
+
+script: |-
+  #!/bin/bash
+  {{- $index := 0 -}}
+  {{- $registryMirrors := get .Values "registry_mirrors" | default dict -}}
+  {{- $defaultSettings := get $registryMirrors "default_settings" | default dict -}}
+  {{- range $registry, $mirrors := get $registryMirrors "hosts_config" | default dict }}
+
+  mkdir -p $KIND_CONFIG_DIRECTORY/{{ $registry }}
+
+  cat << EOF{{ $index }} > $KIND_CONFIG_DIRECTORY/{{ $registry }}/hosts.toml
+  server = "https://{{ $registry }}"
+  {{- range $_, $config := $mirrors }}
+  [host."{{ $config.mirror_url }}"]
+  {{- range $setting,$value := mergeOverwrite (deepCopy $defaultSettings) (deepCopy (get $config "registry_settings" | default dict)) }}
+    {{ $setting }} = {{ $value | toJson }}
+  {{- end -}}
+  {{- end }}
+  EOF{{ $index }}
+  {{- $index = add1 $index -}}
+  {{- end }}
+
+{{- end -}}

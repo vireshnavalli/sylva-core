@@ -1,0 +1,56 @@
+# This example environment values files will let you build
+# a Sylva CAPO mgmt cluster (inheriting from ../rke2-capo)
+# plus a Metal3 workload cluster with 1 control node and 1 worker node
+
+cluster:
+  capi_providers:
+    infra_provider: capo
+    bootstrap_provider: cabpr
+  capo:
+    image_key: ubuntu-jammy-plain-rke2-1-26-9 # OpenStack Glance image (key of image in sylva_diskimagebuilder_images/os_images)
+    ssh_key_name: # put the name of your nova SSH keypair here
+    network_id: # the network id is provided by remote target unit if Kustomize remote target is used, but can be overwritten
+    flavor_name: # put the name of the flavor from OpenStack
+    rootVolume:
+      diskSize: 100
+      volumeType: ceph_sas
+
+  control_plane_replicas: 3
+
+  # machine_deployments:
+  #   md0:
+  #     replicas: 1
+  #     capo:
+  #       failure_domain: region0
+
+openstack:
+  ## If cinder CSI is used, provide a name for the storage class and the storage type from OpenStack
+  storageClass:
+    name: "cinder-ceph-ssd"
+    type: "ceph_ssd"
+
+units:
+
+  capm3:
+    enabled: true
+
+proxies:
+  # put your own proxy settings here if you need
+  http_proxy: ""
+  https_proxy: ""
+  no_proxy: ""
+
+# configure containerd registry mirrors following https://github.com/containerd/containerd/blob/main/docs/hosts.md
+# see charts/syla-units/values.yaml for a more detailled example
+# registry_mirrors:
+#   hosts_config:
+#     docker.io:
+#     - mirror_url: http://your.mirror/docker
+
+# add ntp servers if you need
+ntp:
+  enabled: false
+  servers:
+  # - 1.2.3.4
+  # - 1.2.3.5
+

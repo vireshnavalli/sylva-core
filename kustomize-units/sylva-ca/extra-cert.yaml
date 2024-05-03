@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: extra-ca-cert
+  namespace: cert-manager
+type: Opaque
+data:
+  cacert: ${CACERT}

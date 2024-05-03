@@ -1,0 +1,61 @@
+
+---
+units:
+  # Disabling some units for lightweight deployment testing
+  cluster-creator-policy:
+    enabled: false
+  monitoring:
+    enabled: false
+  keycloak:
+    enabled: false
+  flux-webui:
+    enabled: false
+  capi-rancher-import:
+    enabled: false
+  kyverno:
+    enabled: false
+  shared-workload-clusters-settings:
+    enabled: false
+  harbor:
+    enabled: false
+  sylva-units-operator:
+    kustomization_spec:
+      images:
+        - name: controller
+          newName: fedcicchiello/sylva-units-operator
+          newTag: b98ccdb15948114a9bcc5308bcc03576c829d52f
+  workload-cluster-operator:
+    enabled: false
+  rancher-init:
+    enabled: false
+  rancher:
+    enabled: false
+  synchronize-secrets:
+    enabled: false
+
+cluster:
+  k8s_version: v1.29.2
+  capi_providers:
+    infra_provider: capd
+    bootstrap_provider: cabpk
+
+  # CAPD only supports 1 CP machine
+  control_plane_replicas: 1
+
+  cluster_services_cidrs:
+    - 10.128.0.0/12
+
+  cluster_pods_cidrs:
+    - 192.168.0.0/16
+
+capd_docker_host: unix:///var/run/docker.sock
+
+cluster_virtual_ip: 172.18.0.200
+
+proxies:
+  http_proxy: ""
+  https_proxy: ""
+  no_proxy: ""
+
+ntp:
+  enabled: false

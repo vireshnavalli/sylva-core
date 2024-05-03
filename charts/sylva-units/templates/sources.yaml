@@ -1,0 +1,74 @@
+{{/* This template generates GitRepository or OCIRepository from .Values.source_templates
+     along with any corresponding Secret
+*/}}
+{{- $origUnitTemplates := deepCopy .Values.unit_templates -}}{{/* we need to preserve this, to defer template computation of _unit_name_ */}}
+{{- $envAll := set . "Values" (include "interpret-values-gotpl" . | fromJson) -}}
+
+{{- $used_repos := list -}}
+{{- range $unit_name, $unit_def := $envAll.Values.units -}}
+  {{/* inherit settings from any template specified in unit.<this unit>.unit_templates */}}
+  {{- $unit_def := include "unit-def-from-templates" (tuple $envAll $unit_name $origUnitTemplates) | fromJson -}}
+
+  {{- if and (include "unit-enabled" (tuple $envAll $unit_name))
+             (not (hasKey $unit_def "helm_repo_url"))            -}}
+    {{- $repo_name := $unit_def.repo -}}
+    {{- if not (hasKey $envAll.Values.source_templates $repo_name) -}}
+      {{- fail (printf "units.%s.repo refers to '%s' that isn't defined in .source_templates" $unit_name $repo_name) -}}
+    {{- end -}}
+    {{- $used_repos = append $used_repos $repo_name | uniq -}}
+  {{- end -}}
+{{- end -}}
+
+{{- range $repo_name := $used_repos -}}
+  {{- if not (hasKey $envAll.Values.source_templates $repo_name) -}}
+    {{- fail (printf "no such repo: %s" $repo_name) -}}
+  {{- end -}}
+  {{- $repo_def := deepCopy (index $envAll.Values.source_templates $repo_name) -}}
+
+  {{- if (get $repo_def "existing_source") }}
+    {{/* no need to generate a source */}}
+  {{- else }}
+    {{- if ($repo_def.kind | eq "GitRepository") }}
+apiVersion: source.toolkit.fluxcd.io/v1
+    {{- else }}
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+    {{- end }}
+kind: {{ $repo_def.kind }}
+metadata:
+  name: {{ $repo_name }}
+  labels: {{ include "sylva-units.labels" $envAll | nindent 4 }}
+spec:
+    {{- $secret_ref := dict -}}
+    {{- if hasKey $repo_def "auth" -}}
+      {{- $secret_ref = dict "secretRef" (dict "name" (printf "source-repo-auth-%s" $repo_name)) -}}
+    {{- end -}}
+    {{- $spec := dict -}}
+    {{- $spec = mergeOverwrite $spec (deepCopy ($repo_def.kind | eq "GitRepository" | ternary $envAll.Values.git_repo_spec_default $envAll.Values.oci_repo_spec_default)) (deepCopy $repo_def.spec) (deepCopy $secret_ref) -}}
+{{ $spec | toYaml | nindent 2 }}
+    {{- if hasKey $repo_def "auth" }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: source-repo-auth-{{ $repo_name }}
+  labels:
+    sylva-units.repo: {{ $repo_name }}
+{{ include "sylva-units.labels" $envAll | indent 4 }}
+      {{ if $repo_def.kind | eq "GitRepository" }}
+stringData: {{ $repo_def.auth | toYaml | nindent 2 }}
+      {{ else if $repo_def.kind | eq "OCIRepository" }}
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: |
+        {{- $auths := dict "auths"
+                          (dict ((urlParse $repo_def.spec.url).hostname)
+                                (dict "username" $repo_def.auth.username
+                                      "password" $repo_def.auth.password
+                                      "auth" (printf "%s:%s" $repo_def.auth.username $repo_def.auth.password | b64enc)))
+        }}
+{{ $auths | toJson | b64enc | indent 4 -}}
+      {{ end -}}
+    {{- end }}
+---
+  {{ end -}}
+{{- end -}}

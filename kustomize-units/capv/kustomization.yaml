@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- https://github.com/kubernetes-sigs/cluster-api-provider-vsphere/releases/download/v1.9.0/infrastructure-components.yaml
+- serviceaccount.yaml
+# Add labels to enable clusterctl move to retrieve resources correponding to capv CRDs
+labels:
+  - pairs:
+      clusterctl.cluster.x-k8s.io: ""
+patches:
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: capv-leader-election-rolebinding
+      namespace: capv-system
+    patch: |-
+      - op: replace
+        path: /subjects/0/name
+        value: capv-manager
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: ClusterRoleBinding
+      name: capv-manager-rolebinding
+    patch: |-
+      - op: replace
+        path: /subjects/0/name
+        value: capv-manager
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: capv-controller-manager
+      namespace: capv-system
+    patch: |-
+      - op: add
+        path: /spec/template/spec/serviceAccountName
+        value: capv-manager

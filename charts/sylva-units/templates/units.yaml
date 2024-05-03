@@ -1,0 +1,315 @@
+{{- $origUnitTemplates := deepCopy .Values.unit_templates -}}{{/* we need to preserve this, to defer template computation of _unit_name_ */}}
+{{- $envAll := set . "Values" (include "interpret-values-gotpl" . | fromJson) -}}
+{{ range $unit_name, $unit_def := .Values.units }}
+
+  {{- if include "unit-enabled" (tuple $envAll $unit_name) -}}
+
+    {{/* inherit settings from any template specified in unit.<this unit>.unit_templates */}}
+    {{- $unit_def := include "unit-def-from-templates" (tuple $envAll $unit_name $origUnitTemplates) | fromJson -}}
+
+    {{- if not (or (hasKey $unit_def "kustomization_spec") (hasKey $unit_def "helmrelease_spec")) -}}
+      {{- fail (printf "unit %s has neither kustomization_spec or helmrelease_spec:\n%s" $unit_name ($unit_def | toYaml)) -}}
+    {{- end -}}
+
+    {{/*********** Prepare labels used in all generated objects */}}
+
+    {{- $labels := deepCopy ($unit_def.labels | default dict) -}}
+    {{- $_ := set $labels "sylva-units.unit" $unit_name -}}
+    {{- $_ := mergeOverwrite $labels (include "sylva-units.labels" $envAll | fromYaml) }}
+
+    {{- $helmrelease_spec_overrides := dict -}}
+    {{- $kustomization_spec_overrides := dict -}}
+
+    {{- if not (hasKey $unit_def "helm_repo_url") -}}
+      {{/* if no helm_repo_url is set, then we know we'll use a GitRepository or OCIRepository */}}
+      {{/* the GitRepository or OCIRepository used here are generated in 'sources.yaml' */}}
+
+      {{- $repo_name := $unit_def.repo -}}
+
+      {{- if not $repo_name -}}
+        {{- fail (printf "repo_name is empty for unit %s: %s\nunit_def:\n%s" $unit_name $repo_name ($unit_def | toYaml)) -}}
+      {{- end -}}
+
+      {{- $repo_def := index $envAll.Values.source_templates $repo_name -}}
+
+      {{- $sourceRef := dict -}}
+      {{- if get $repo_def "existing_source" -}}
+        {{- $_ = set $sourceRef "name" $repo_def.existing_source.name -}}
+        {{- $_ = set $sourceRef "kind" $repo_def.existing_source.kind -}}
+        {{- $_ = set $sourceRef "namespace" (get $repo_def.existing_source "namespace" | default $envAll.Release.Namespace) -}}
+      {{- else -}}
+        {{- $_ = set $sourceRef "name" $repo_name -}}
+        {{- $_ = set $sourceRef "kind" $repo_def.kind -}}
+      {{- end -}}
+
+      {{ if hasKey $unit_def "helmrelease_spec" -}}
+        {{ if eq $repo_def.kind "OCIRepository" }}
+          {{/* if the source repo is not of type GitRepository then we fail as we don't know how to do that yet */}}
+          {{ fail (printf "You cannot use helmrelease_spec for a unit using 'repo' and referencing a source repo of type OCIRepository (unit '%s')" $unit_name) }}
+        {{ end }}
+        {{/*
+        if helmrelease_spec is used and the source repo is of type GitRepository then we inject our GitRepository in it as sourceRef
+        (the Kustomization will in that case, see in 'unit_helmrelease_kustomization_spec_default', use 'sylva-core' as the GitRepository)
+        */}}
+        {{- $helmrelease_spec_overrides = dict "chart" (dict "spec" (dict "sourceRef" $sourceRef
+                                                                          "reconcileStrategy" "Revision")) -}}
+      {{- else -}}{{/* if 'helmrelease_spec' isn't used, then the source from 'repo' is used for the Kustomization */}}
+        {{- $kustomization_spec_overrides = dict "sourceRef" $sourceRef -}}
+      {{- end }}
+
+    {{ else }}{{/* helm_repo is declared, we generate a HelmRepository */}}
+
+      {{- $helm_repo_spec := dict -}}
+      {{- $schema := urlParse $unit_def.helm_repo_url -}}
+        {{- if $schema.scheme | eq "oci" -}}
+          {{- $helm_repo_spec = dict "type" "oci" -}}
+        {{- end -}}
+      {{- $helm_repo_spec = mergeOverwrite $helm_repo_spec (deepCopy $envAll.Values.helm_repo_spec_default) (dict "url" $unit_def.helm_repo_url) -}}
+
+      {{/*
+      we inject a sourceRef pointing to our dynamically created HelmRepository
+      (unless the unit definition provides a chart.spec.sourceRef, which we do in the
+      specific case of bootstrap/mgmt handover, see bootstrap.values.yaml 'sylva-units' unit)
+      */}}
+      {{- if not ($unit_def.helmrelease_spec | dig "chart" "spec" "sourceRef" dict) -}}
+        {{- $helmrelease_spec_overrides = dict "chart" (dict "spec" (dict "sourceRef" (dict "kind" "HelmRepository" "name" (printf "unit-%s" $unit_name)))) -}}
+      {{- end }}
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: unit-{{ $unit_name }}
+  labels:
+{{ $labels | toYaml | indent 4 }}
+spec: {{ $helm_repo_spec | toYaml | nindent 2 }}
+    {{ end -}}
+
+    {{/******************* Generation of the Kustomization */}}
+
+
+    {{- $patches := list -}}
+
+    {{/* here, if "helmrelease_spec" is used, we define the spec of the inner HelmRelease */}}
+    {{- if hasKey $unit_def "helmrelease_spec" -}}
+      {{/* this is where we refer to ./kustomize-units/helmrelease-generic */}}
+      {{- $kustomization_spec_overrides = mergeOverwrite $kustomization_spec_overrides (deepCopy $envAll.Values.unit_helmrelease_kustomization_spec_default) -}}
+
+      {{/* combine '_postRenderers' with 'postRenderers' */}}
+      {{- $post_renderers := concat ($unit_def.helmrelease_spec | dig "_postRenderers" list)
+                                    ($unit_def.helmrelease_spec | dig "postRenderers" list) -}}
+
+      {{/* here we workaround the fact that 'concat', when only given empty lists,
+      returns some internal go object that does not render as "[]", but as "null"
+      */}}
+      {{- if not $post_renderers -}}
+        {{- $post_renderers = list -}} {{/* reset to a simple empty list */}}
+      {{- end -}}
+
+      {{/* ensure that we clean _postRenderers from the rendered resources */}}
+      {{- $_ := unset $unit_def.helmrelease_spec "_postRenderers" -}}
+
+      {{/*
+      If we deploy the Helm release from an OCI artifact (using a HelmRepository of type oci) a
+      unit which is initially defined as deployed from a GitRepository we need to adapt
+      some attributes to compensate for small variations.
+
+      .---------------------------------------------------------------------------------.
+      | HelmRelease           source: | GitRepo and chart values    | HelmRepo type OCI |
+      |---------------------------------------------------------------------------------|
+      | spec.chart.spec.chart         | charts/foo                  | bar (1)           |
+      | spec.chart.spec.valuesFiles[] | charts/foo/more-values.yaml | more-values.yaml  |
+      '---------------------------------------------------------------------------------'
+      (Where 'bar' is the helm chart name used for artifact building)
+
+      The adaptation is done as follows:
+      - 'chart' is rewritten to use 'helm_chart_artifact_name' if defined
+        or the last item in the chart path (charts/foo -> foo) ; helm_chart_artifact_name
+        is used for units for which 'chart' is empty or '.' (e.g. sylva-capi-cluster chart)
+      - the same convention is used to produce OCI artifact for Helm charts
+        in tools/oci/push-helm-charts-artifacts.sh
+      - items in 'valuesFiles' are rewritten to remove the chart path
+        ('charts/foo/more-values.yaml' -> 'more-values.yaml')
+      */}}
+      {{- if get (urlParse ($unit_def | dig "helm_repo_url" "none://")) "scheme" | eq "oci" -}}
+        {{- $chart_spec := $unit_def.helmrelease_spec.chart.spec -}}
+
+        {{/* for each item of 'valuesFiles', change "<spec.chart.spec.chart>/more-values.yaml" into "more-values.yaml" */}}
+        {{- $values_files := list }}
+        {{- range $value_file := $chart_spec.valuesFiles -}}
+          {{- $values_files = append $values_files (regexReplaceAll (printf "^%s/" $chart_spec.chart) $value_file "") -}}
+        {{- end -}}
+        {{- $_ := set $chart_spec "valuesFiles" $values_files -}}
+
+        {{/* for 'chart' attribute, change "charts/foo" into helm_chart_artifact_name or last item of .chart */}}
+        {{- $_ := set $chart_spec "chart" (or (get $unit_def "helm_chart_artifact_name")
+                                              (regexReplaceAll ".*?([^/]+)$" $chart_spec.chart "${1}")
+                                          ) -}}
+      {{- end -}}
+
+      {{/* here, if "helm_chart_versions" is used, we extract the chart version
+      that would be used in case no specific 'helmrelease_spec.chart.spec.version' is defined
+      */}}
+      {{- if hasKey $unit_def "helm_chart_versions" -}}
+        {{- $helm_chart_versions_selection := "" -}}
+        {{- range $ver, $enabled := $unit_def.helm_chart_versions }}
+          {{- if eq $enabled "true" -}}
+            {{- if $helm_chart_versions_selection -}}
+              {{- fail (printf "unit '%s' has 'true' set on more than one version inside 'helm_chart_versions'" $unit_name) }}
+            {{- else -}}
+              {{- $helm_chart_versions_selection = $ver -}}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+        {{- if not $helm_chart_versions_selection }}
+          {{- fail (printf "unit '%s' has no version set to true inside 'helm_chart_versions'" $unit_name)}}
+        {{- end }}
+        {{- if not $unit_def.helmrelease_spec.chart.spec.version -}}
+          {{- $_ := set $unit_def.helmrelease_spec.chart.spec "version" $helm_chart_versions_selection -}}
+        {{- end }}             
+      {{- end }}
+
+      {{/* produce the HelmRelease specification, merging the different sources we have */}}
+      {{- $helmrelease_spec := dict "releaseName" $unit_name -}}
+      {{- $helmrelease_spec := mergeOverwrite $helmrelease_spec (deepCopy $envAll.Values.unit_helmrelease_spec_default) (deepCopy $unit_def.helmrelease_spec) (deepCopy $helmrelease_spec_overrides) (dict "postRenderers" $post_renderers) -}}
+
+      {{/* if the merge above resulted in setting kubeConfig or targetNamespace to null, remove them from the dict */}}
+      {{- if hasKey $helmrelease_spec "kubeConfig" -}}
+        {{- if $helmrelease_spec.kubeConfig | eq nil -}}
+          {{- $_ := unset $helmrelease_spec "kubeConfig" -}}
+        {{- end -}}
+      {{- end -}}
+      {{- if hasKey $helmrelease_spec "targetNamespace" -}}
+        {{- if $helmrelease_spec.targetNamespace | eq nil -}}
+          {{- $_ := unset $helmrelease_spec "targetNamespace" -}}
+        {{- end -}}
+      {{- end -}}
+
+      {{- if hasKey $unit_def "helm_secret_values" -}}
+        {{/* if the unit has "helm_secret_values" defined, then
+             we push a secret in the HelmRelease via kustomization_substitute_secrets"
+        */}}
+        {{- $_ := set $unit_def "kustomization_substitute_secrets" (dict "VALUES_B64" ($unit_def.helm_secret_values | toYaml | b64enc)) -}}
+      {{- end -}}
+
+      {{- $secretHash := $unit_def.helm_secret_values | default dict | toYaml | sha256sum | trunc 7 }}
+      {{/* inject the HelmRelease spec via patches in the Kustomization: */}}
+      {{- $patches = index (include "helmrelease-kustomization-patch-template" (tuple $unit_name $helmrelease_spec $labels (hasKey $unit_def "helm_secret_values") $secretHash) | fromYaml) "patches" -}}
+    {{- end -}}
+
+    {{- $kustomization_spec := dict -}}
+
+    {{- if hasKey $unit_def "kustomization_substitute_secrets" -}}
+        {{/* if the unit has "kustomization_substitute_secrets" defined, then
+             we add to substituteFrom a Secret with "kustomization_substitute_secrets"
+        */}}
+        {{- $secretName := printf "kustomization-unit-substitute-%s-%s" $unit_name ($unit_def.kustomization_substitute_secrets | toYaml | sha256sum | trunc 7) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  labels: {{ $labels | toYaml | nindent 4 }}
+stringData:
+{{- $unit_def.kustomization_substitute_secrets | toYaml | nindent 2 }}
+
+      {{- $substituteFrom := (($unit_def.kustomization_spec | default dict).postBuild | default dict).substituteFrom | default list -}}
+      {{- $secretsValues := dict "kind" "Secret" "name" $secretName -}}
+
+      {{- $_ := mergeOverwrite $kustomization_spec_overrides (dict "postBuild" (dict "substituteFrom" (append $substituteFrom $secretsValues))) -}}
+    {{- end -}}
+
+    {{/* let's set the dependsOn field */}}
+    {{- $dependsOn := dict -}}
+    {{- if hasKey $unit_def "depends_on" -}}
+      {{- $dependsOnList := list -}}
+      {{- range $dep_unit_name, $is_depend_on := $unit_def.depends_on -}}
+        {{- if tuple $envAll $is_depend_on (printf "%s, depends on %s" $unit_name $dep_unit_name) | include "interpret-for-test" -}}
+
+          {{- if $dep_unit_name | contains "/" -}}
+            {{- $dependsOnList = append $dependsOnList (dict "namespace" (regexReplaceAll "/.*" $dep_unit_name "") "name" (regexReplaceAll ".*/" $dep_unit_name "")) -}}  
+          {{- else -}}
+            {{- if not (hasKey $envAll.Values.units $dep_unit_name) -}}
+              {{- fail (printf "unit '%s' is declared with a dependency on non-existing unit '%s'" $unit_name $dep_unit_name) -}}
+            {{- else if not (include "unit-enabled" (tuple $envAll $dep_unit_name)) -}}
+              {{- fail (printf "unit '%s' is declared with a dependency on disabled unit '%s'" $unit_name $dep_unit_name) -}}
+            {{- end -}}
+            {{- $dependsOnList = append $dependsOnList (dict "name" $dep_unit_name) -}}  
+          {{- end -}}
+        {{- end -}}
+      {{ end }}
+      {{- $_ := set $dependsOn "dependsOn" $dependsOnList -}}
+    {{- end -}}
+
+    {{/* combine '_patches' with 'patches' and the $patches computed earlier in this template */}}
+    {{- $patches := concat $patches ($unit_def | dig "kustomization_spec" "_patches" list)
+                                    ($unit_def | dig "kustomization_spec" "patches" list) -}}
+    {{/* combine '_components' with 'components' */}}
+    {{- $components := concat ($unit_def | dig "kustomization_spec" "_components" list)
+                              ($unit_def | dig "kustomization_spec" "components" list) -}}
+
+    {{/* ensure that we clean _patches and _components from the rendered resources */}}
+    {{- if hasKey $unit_def "kustomization_spec" -}}
+      {{- $_ := unset $unit_def.kustomization_spec "_patches" -}}
+      {{- $_ := unset $unit_def.kustomization_spec "_components" -}}
+    {{- end -}}
+
+    {{/* here we workaround the fact that 'concat', when only given empty lists,
+     returns some internal go object that does not render as "[]", but as "null"
+    */}}
+    {{- if not $patches -}}
+      {{- $patches = list -}} {{/* reset to a simple empty list */}}
+    {{- end -}}
+    {{- if not $components -}}
+      {{- $components = list -}} {{/* reset to a simple empty list */}}
+    {{- end -}}
+
+    {{/* finalize the definition of the Kustomization spec by merging everything we have */}}
+    {{- $kustomization_spec = mergeOverwrite $kustomization_spec (deepCopy $envAll.Values.unit_kustomization_spec_default) ($unit_def.kustomization_spec | default dict) $dependsOn $kustomization_spec_overrides (dict "patches" $patches) (dict "components" $components) -}}
+
+    {{/* if the merge above resulted in setting kubeConfig or targetNamespace to null, remove them from the dict */}}
+    {{- if hasKey $kustomization_spec "kubeConfig" -}}
+      {{- if $kustomization_spec.kubeConfig | eq nil -}}
+        {{- $_ := unset $kustomization_spec "kubeConfig" -}}
+      {{- end -}}
+    {{- end -}}
+    {{- if hasKey $kustomization_spec "targetNamespace" -}}
+      {{- if $kustomization_spec.targetNamespace | eq nil -}}
+        {{- $_ := unset $kustomization_spec "targetNamespace" -}}
+      {{- end -}}
+    {{- end -}}
+
+    {{/* 
+    if healthChecks is specified on kustomization_spec while helmrelease_spec is defined,
+    then we inject a reference to the HelmRelease in the healthChecks, to ensure
+    that the HelmRelease object will not be omitted
+    */}}
+    {{- if and (hasKey $kustomization_spec "healthChecks")
+               (hasKey $unit_def "helmrelease_spec") -}}
+      {{- $_ := set $kustomization_spec "healthChecks"
+                (append ($kustomization_spec.healthChecks|default list)
+                  (dict
+                    "namespace" ($unit_def.kustomization_spec.targetNamespace | default $envAll.Release.Namespace)
+                    "apiVersion" "helm.toolkit.fluxcd.io/v2beta2"
+                    "kind" "HelmRelease"
+                    "name" $unit_name)
+                ) -}}
+      {{- $_ := set $kustomization_spec "wait" false -}}
+    {{- end -}}
+
+    {{- if not (hasKey $kustomization_spec "path") -}}
+      {{- fail (printf "unit '%s': kustomization_spec has no 'path' specififed" $unit_name) -}}
+    {{- end -}}
+
+    {{- if and (gt (len (get $kustomization_spec "healthChecks" | default dict)) 0) (get $kustomization_spec "wait" | default false) -}}
+      {{- fail (printf "unit '%s' has healthChecks defined but 'wait' set to true, which is inconsistent because healthChecks are ignored with 'wait: true')" $unit_name) -}}
+    {{- end }}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: {{ $unit_name }}
+  labels: {{ $labels | toYaml | nindent 4 }}
+  annotations: {{ $unit_def.annotations | default dict | toYaml | nindent 4 }}
+spec: {{ $kustomization_spec | toYaml | nindent 2 }}
+  {{- end -}}
+{{ end }}

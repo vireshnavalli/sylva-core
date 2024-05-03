@@ -1,0 +1,522 @@
+# Bootstrap values for sylva-units.
+#
+# These value are meant to be used as overrides to the default values from values.yaml
+# when the chart is instantiated in the bootstrap cluster
+_internal:
+  default_storage_class_unit: "bootstrap-local-path"
+  libvirt_metal_networks: '[{"name": "provisioning", "namespace": "default",  "ips": ["192.168.10.123"]}, { "name": "management", "namespace": "default"}]'
+  bootstrap_node_ip: |-
+      {{- $result := "not found" -}}
+      {{- range $address := lookup "v1" "Node" "" "" | dig "items" list | first | default dict |  dig "status" "addresses" list -}}
+        {{- if and (eq $address.type "InternalIP") (eq $result "not found") -}}
+          {{- $result = $address.address -}}
+        {{- end -}}
+      {{- end -}}
+      {{- $result -}}
+  ironic_ip: >-
+    {{-
+    tuple .
+    (tuple . "libvirt-metal" | include "unit-enabled")
+    "192.168.10.123"
+    (.Values.metal3.external_bootstrap_ip | default .Values.metal3.bootstrap_ip | default "")
+    | include "interpret-ternary"
+    -}}
+  kind_kubeadm_networking:  # used to populate no_proxy_additional with kind pod and services subnets
+    '{{
+    lookup "v1" "ConfigMap" "kube-system" "kubeadm-config"
+      | dig "data" "ClusterConfiguration" ""
+      | fromYaml | default dict
+      | dig "networking" (dict "podSubnet" "0.0.0.0/32" "serviceSubnet" "0.0.0.0/32")
+      | include "preserve-type"
+    }}'
+    # the 0.0.0.0/32 values above are just here to let us use "helm template" with this
+    # file without errors
+
+
+unit_templates:
+  base-deps:
+    depends_on: null  # don't inherit dependencies from management.values.yaml
+
+unit_kustomization_spec_default:
+  interval: 100000m   # for bootstrap, we don't care about having flux update things on the longterm
+  retryInterval: 30s  # but we want it to retry quickly so that the system converges faster (quicker reaction when a dependency is met)
+
+unit_helmrelease_spec_default:
+  interval: 100000m
+
+units:
+  metal3-suse:
+    enabled_conditions:
+      - '{{ tuple . "capm3" | include "unit-enabled" }}'
+    depends_on:
+      multus: '{{ tuple . "multus" | include "unit-enabled" }}'
+    helmrelease_spec:
+      values:
+        global:
+          ironicIP: >-
+            {{- if (tuple . "capm3" | include "unit-enabled") -}}
+              {{- if .Values._internal.ironic_ip -}}
+                {{- .Values._internal.ironic_ip -}}
+              {{- else -}}
+                {{- fail "to bootstrap a baremetal management cluster, you need to set metal3.bootstrap_ip or metal3.external_bootstrap_ip" -}}
+              {{- end -}}
+            {{- end -}}
+        metal3-ironic:
+          podAnnotations:
+            k8s.v1.cni.cncf.io/networks: '{{ tuple . (tuple . "libvirt-metal" | include "unit-enabled") .Values._internal.libvirt_metal_networks "" | include "interpret-ternary" }}'
+          service:
+            externalIPs:
+              - '{{ .Values._internal.bootstrap_node_ip }}'
+    labels:
+      suspend-on-pivot: "yes"
+
+  metal3:
+    enabled_conditions:
+      - '{{ tuple . "capm3" | include "unit-enabled" }}'
+    depends_on:
+      metal3-sync-secrets: false ## override default set in values.yaml
+      multus: '{{ not (empty (tuple . .Values.units.metal3.helmrelease_spec.values.ironicExtraNetworks | include "interpret-as-string")) }}'
+    helmrelease_spec:
+      install:
+        createNamespace: true
+      values:
+        ironicExtraNetworks: '{{ tuple . (tuple . "libvirt-metal" | include "unit-enabled") .Values._internal.libvirt_metal_networks "" | include "interpret-ternary" }}'
+        # ironicIPADownloaderBaseURI:
+        services:
+          ironic:
+            # Address of the host, that will be reachable from the outside
+            ironicIP: >-
+              {{- if (tuple . "capm3" | include "unit-enabled") -}}
+                {{- if .Values._internal.ironic_ip -}}
+                  {{- .Values._internal.ironic_ip -}}
+                {{- else -}}
+                  {{- fail "to bootstrap a baremetal management cluster, you need to set metal3.bootstrap_ip or metal3.external_bootstrap_ip" -}}
+                {{- end -}}
+              {{- end -}}
+            # Address of kind container/node, that will be used to bind ironic service
+            externalIPs:
+              - '{{ .Values._internal.bootstrap_node_ip }}'
+      valuesFrom: []  # override the valuesFrom from default values.yaml which is based on Vault/ExternalSecret
+    helm_secret_values:  # on bootstrap we don't have Vault/ExternalSecret, so we rely on Helm-generated random passwords
+      mariadb:
+        auth:
+          rootPassword: '{{ .Values._internal.default_password | trunc 32 }}'
+          replicationPassword: '{{ .Values._internal.default_password | trunc -32 }}'
+          ironicPassword: '{{ .Values._internal.default_password }}'
+      auth:
+        ironicPassword: '{{ .Values._internal.default_password }}'
+        ironicInspectorPassword: '{{ .Values._internal.default_password }}'
+    labels:
+      suspend-on-pivot: "yes"  # this unit must be suspended before pivot
+
+  bootstrap-local-path:
+    info:
+      description: installs localpath CSI in bootstrap cluster
+      internal: true
+    enabled_conditions:
+      - '{{ tuple . .Values._internal.metal3_unit | include "unit-enabled" }}'
+    unit_templates: []
+    repo: sylva-core
+    kustomization_spec:
+      path: ./kustomize-units/bootstrap-local-path
+      wait: true
+
+  ingress-nginx:
+    enabled_conditions:  # this purposefully cancels the condition set in values.yaml
+      - '{{ tuple . "os-image-server" | include "unit-enabled" }}'
+    depends_on:
+      calico: false
+    helmrelease_spec:
+      values:
+        controller:
+          service:
+            externalIPs:
+              - '{{ .Values._internal.bootstrap_node_ip }}'
+
+  os-image-server:
+    helmrelease_spec:
+      values:
+        service:
+          type: NodePort
+
+  calico-crd:
+    # overload calico-crd definition in bootstrap context to deploy in the management cluster
+    depends_on:
+      cluster-reachable: true
+    helmrelease_spec:
+      kubeConfig:
+        secretRef:
+          name: '{{ .Values.cluster.name }}-kubeconfig'
+    labels:
+      suspend-on-pivot: "yes"  # this unit must be suspended before pivot
+
+  calico:
+    # overload calico definition in bootstrap context to deploy in the management cluster
+    depends_on:
+      cluster-reachable: true
+    helmrelease_spec:
+      kubeConfig:
+        secretRef:
+          name: '{{ .Values.cluster.name }}-kubeconfig'
+    labels:
+      suspend-on-pivot: "yes"  # this unit must be suspended before pivot
+
+  tigera-clusterrole:
+    depends_on:
+      cluster-reachable: true
+    kustomization_spec:
+      kubeConfig:
+        secretRef:
+          name: '{{ .Values.cluster.name }}-kubeconfig'
+
+  namespace-defs:
+    depends_on:
+      cluster-reachable: true
+    repo: sylva-core
+    kustomization_spec:
+      kubeConfig:
+        secretRef:
+          name: '{{ .Values.cluster.name }}-kubeconfig'
+    labels:
+      suspend-on-pivot: "yes"  # this unit must be suspended before pivot
+
+  management-cluster-flux:
+    info:
+      description: installs flux in management cluster during bootstrap
+      internal: true
+    depends_on:
+      cluster-reachable: true
+      # FIXME; Flux wait/healthcheck on management cluster does not work as expected, it becomes ready as soon as manifests are applied
+      # cluster readyness will actually be ensured by the retries on installations of this kustomization for now.
+      # maybe cluster CRD is not compatible with kstatus? (see https://fluxcd.io/flux/units/kustomize/kustomization/#health-assessment)
+      calico: '{{ .Values.cluster.capi_providers.bootstrap_provider | eq "cabpk" }}'
+    unit_templates: []
+    repo: sylva-core
+    kustomization_spec:
+      path: ./kustomize-units/flux-system/base
+      kubeConfig:
+        secretRef:
+          name: '{{ .Values.cluster.name }}-kubeconfig'
+      targetNamespace: flux-system
+      wait: true
+      _components:
+      - '{{ tuple "../components/extra-ca" .Values.oci_registry_extra_ca_certs | include "set-only-if" }}'
+      postBuild:
+        substitute:
+          EXTRA_CA_CERTS: '{{ tuple (.Values.oci_registry_extra_ca_certs | default "" | b64enc) .Values.oci_registry_extra_ca_certs | include "set-only-if" }}'
+          # the no_proxy computed for bootstrap cluster includes pods/services subnets for the kind cluster (see no_proxy_additional in this file)
+          # but we don't need nor want that in the mgmt cluster
+          no_proxy:
+            '{{-
+            include "sylva-units.no_proxy"
+              (tuple . (dict .Values._internal.kind_kubeadm_networking.podSubnet false
+                             .Values._internal.kind_kubeadm_networking.servicesSubnet false))
+            -}}'
+        substituteFrom:
+        - kind: ConfigMap
+          name: proxy-env-vars
+    labels:
+      suspend-on-pivot: "yes"  # this unit must be suspended before pivot
+
+  management-cluster-configs:
+    info:
+      description: copies configuration object in management cluster during bootstrap
+      internal: true
+    depends_on:
+      management-cluster-flux: true
+      namespace-defs: true
+    unit_templates: []
+    repo: sylva-core
+    kustomization_spec:
+      # FIXME: This is very hacky, we should use an ad-hoc kustomization instead of this job to re-create configmap and secrets on maangement cluster
+      path: ./kustomize-units/kube-job
+      wait: true
+      force: true
+      postBuild:
+        substitute:
+          JOB_NAME: copy-configs-job
+          JOB_CHECKSUM: '{{ .Values | toJson | sha256sum }}'
+          JOB_TARGET_NAMESPACE: sylva-system
+      _patches:
+      - target:
+          kind: ConfigMap
+        patch: |
+          - op: replace
+            path: /metadata/name
+            value: copy-configs-job-sylva-system-cm
+          - op: replace
+            path: /data/kube-job.sh
+            value: |
+              #!/bin/bash
+              set -e
+
+              echo "-- Retrieve target cluster kubeconfig"
+              kubectl -n $TARGET_NAMESPACE get secret {{ .Values.cluster.name }}-kubeconfig -o jsonpath='{.data.value}' | base64 -d > /tmp/management-cluster-kubeconfig
+              echo "-- Copy secrets and configmaps from bootstrap to management cluster"
+              kubectl -n $TARGET_NAMESPACE get configmaps,secrets,gitrepository,helmrepository \
+                -l copy-from-bootstrap-to-management= \
+                -o json \
+                  | jq '.items[] | del(.metadata.labels."helm.toolkit.fluxcd.io/name")
+                                 | del(.metadata.labels."copy-from-bootstrap-to-management")
+                                 | del(.metadata.labels."helm.toolkit.fluxcd.io/namespace")
+                                 | del(.metadata.annotations."sylvactl/reconcileStartedAt")
+                                 | del(.metadata.annotations."sylvactl/reconcileCompletedAt")
+                                 | del(.metadata.resourceVersion)
+                                 | del(.metadata.uid)
+                                 | del(.metadata.creationTimestamp)' \
+                  | kubectl --kubeconfig /tmp/management-cluster-kubeconfig apply -f -
+
+              echo "-- All done"
+
+  # instantiate 'sylva-units' chart again in the management cluster
+  management-sylva-units:
+    info:
+      description: installs sylva-units in management cluster during bootstrap
+      internal: true
+    depends_on:
+      management-cluster-configs: true
+    unit_templates:
+    - sylva-units
+    labels:
+      suspend-on-pivot: "yes"  # this unit must be suspended before pivot
+    # Use a kustomization_spec alongside an helmrelease_spec,
+    # this way we'll create the flux helmrelease into the management cluster
+    kustomization_spec:
+      kubeConfig:
+        secretRef:
+          name: '{{ .Values.cluster.name }}-kubeconfig'
+      _patches:  # we need to force the name of the HelmRelease object to `sylva-units`
+        - target:
+            kind: HelmRelease
+            name: management-sylva-units
+          patch: |
+            - op: replace
+              path: /metadata
+              value:
+                namespace: sylva-system
+                name: sylva-units
+    helmrelease_spec:
+      releaseName: sylva-units
+      chart:
+        spec:
+          chart: charts/sylva-units
+          reconcileStrategy: Revision
+          # copy sourceRef from bootstrap HelmRelease:
+          sourceRef: '{{ lookup "helm.toolkit.fluxcd.io/v2beta2" "HelmRelease" "sylva-system" "sylva-units" | dig "spec" "chart" "spec" "sourceRef" dict | include "preserve-type" }}'
+          # we copy the valuesFiles from the bootstrap HelmRelease, skipping
+          # the bootstrap.values.yaml file (with or without the 'charts/sylva-units/'
+          # prefix which is or isn't there depending on whether this is a deployment
+          # relying on OCI artifacts)
+          valuesFiles: |
+            {{- without (lookup "helm.toolkit.fluxcd.io/v2beta2" "HelmRelease" "sylva-system" "sylva-units" | dig "spec" "chart" "spec" "valuesFiles" list) "bootstrap.values.yaml" "charts/sylva-units/bootstrap.values.yaml" | include "preserve-type" -}}
+      # copy values and valuesFrom from current sylva-units HelmRelease
+      # for now we keep the 'cluster' unit disabled, it produces CAPI resources
+      # defining the management cluster, which we can't define before having done the pivot
+      # (this value override is reverted after pivot by the pivot job below)
+      values: |
+        {{- $chartValues := lookup "helm.toolkit.fluxcd.io/v2beta2" "HelmRelease" "sylva-system" "sylva-units" | dig "spec" "values" dict -}}
+        {{- $disableCluster := dict "units" (dict "cluster" (dict "enabled" false)) -}}
+        {{- mergeOverwrite $chartValues $disableCluster | include "preserve-type" -}}
+      valuesFrom: '{{ lookup "helm.toolkit.fluxcd.io/v2beta2" "HelmRelease" "sylva-system" "sylva-units" | dig "spec" "valuesFrom" list | include "preserve-type" }}'
+
+  pivot:
+    info:
+      description: moves ClusterAPI objects from bootstrap cluster to management cluster
+      internal: true
+    enabled: yes
+    depends_on:
+      management-sylva-units: true
+    unit_templates: []
+    repo: sylva-core
+    kustomization_spec:
+      path: ./kustomize-units/kube-job
+      wait: true
+      force: true
+      postBuild:
+        substitute:
+          JOB_NAME: pivot-job
+          JOB_TARGET_NAMESPACE: sylva-system
+       # change to ClusterRole because the `pivot` unit's pivot-job-sa SA is required to access
+       # the cluster-wide CRD resources in order to move CAPI objects to management cluster
+      _patches:
+      - target:
+          kind: Role
+        patch: |
+          - op: replace
+            path: /kind
+            value: ClusterRole
+      - target:
+          kind: RoleBinding
+        patch: |
+          - op: replace
+            path: /kind
+            value: ClusterRoleBinding
+          - op: replace
+            path: /roleRef/kind
+            value: ClusterRole
+      - target:
+          kind: ConfigMap
+        patch: |
+          - op: replace
+            path: /metadata/name
+            value: pivot-job-sylva-system-cm
+          - op: replace
+            path: /data/kube-job.sh
+            value: |
+              #!/bin/bash
+
+              set -e
+              export HOME=/tmp
+              echo "-- Signal that the pivot job has started. This is used in bootstrap.sh to prevent accidental re-runs"
+              kubectl -n $TARGET_NAMESPACE  annotate --overwrite kustomizations.kustomize.toolkit.fluxcd.io cluster pivot/started=true
+
+              kubectl -n $TARGET_NAMESPACE get secret {{ .Values.cluster.name }}-kubeconfig -o json | \
+                jq '. | del(.metadata.uid) | del(.metadata.ownerReferences) | del(.metadata.resourceVersion) | del(.metadata.creationTimestamp) | .metadata.name = "{{ .Values.cluster.name }}-kubeconfig-copy"' |\
+                kubectl apply -f -
+
+              echo "-- Retrieve target cluster kubeconfig"
+              kubectl -n $TARGET_NAMESPACE get secret {{ .Values.cluster.name }}-kubeconfig -o jsonpath='{.data.value}' | base64 -d > /tmp/management-cluster-kubeconfig
+
+              echo "-- Wait for cluster and machines to be ready as it is a required condition to move"
+              kubectl -n $TARGET_NAMESPACE wait --for condition=ControlPlaneReady --timeout 600s --all cluster
+              kubectl -n $TARGET_NAMESPACE wait --for condition=NodeHealthy --timeout 600s --all machine
+              echo "-- Wait for all Kustomizations related to Cluster API to be ready in management cluster"
+              kubectl -n $TARGET_NAMESPACE --kubeconfig /tmp/management-cluster-kubeconfig wait --for=condition=Ready --timeout=20m kustomization capi-providers-pivot-ready
+
+              echo "-- Suspend Kustomizations and HelmReleases in bootstrap cluster that relate to the management cluster"
+              kubectl -n $TARGET_NAMESPACE patch $(kubectl -n $TARGET_NAMESPACE get helmreleases.helm.toolkit.fluxcd.io,kustomizations.kustomize.toolkit.fluxcd.io \
+                -l suspend-on-pivot=yes -o name) --type=json --patch '[{"op": "replace", "path": "/spec/suspend", "value": true}]'
+
+              kubectl -n $TARGET_NAMESPACE patch helmreleases.helm.toolkit.fluxcd.io sylva-units --type=json \
+                --patch '[{"op": "replace", "path": "/spec/suspend", "value": true}]'
+
+              echo "-- Move cluster definitions from source to target cluster"
+              export CLUSTERCTL_DISABLE_VERSIONCHECK=true
+              SA_PATH=/var/run/secrets/kubernetes.io/serviceaccount/
+              cat <<EOF > /tmp/source-kubeconfig
+              apiVersion: v1
+              kind: Config
+              clusters:
+              - name: default-cluster
+                cluster:
+                  certificate-authority-data: $(cat $SA_PATH/ca.crt | base64 -w 0)
+                  server: https://kubernetes.default.svc.cluster.local
+              contexts:
+              - name: default-context
+                context:
+                  cluster: default-cluster
+                  namespace: $TARGET_NAMESPACE
+                  user: default-user
+              current-context: default-context
+              users:
+              - name: default-user
+                user:
+                  token: $(cat $SA_PATH/token)
+              EOF
+              bootstrap_cluster_kubeconfig="/tmp/source-kubeconfig"
+              clusterctl move --kubeconfig $bootstrap_cluster_kubeconfig --to-kubeconfig /tmp/management-cluster-kubeconfig -v 3
+
+              echo "-- Patch the mgmt cluster sylva-units HelmRelease to enable 'cluster' unit in the management cluster"
+              kubectl -n $TARGET_NAMESPACE --kubeconfig /tmp/management-cluster-kubeconfig \
+                  patch helmrelease sylva-units --type=json --patch='[{"op":"remove","path":"/spec/values/units/cluster/enabled"}]'
+
+              # NOTE: here we could add a reference to another valueFile that would deploy units specific to the management cluster
+              # '[{"op":"add","path":"/spec/chart/spec/valuesFiles/-","value":"charts/sylva-units/management.values.yaml"}]'
+              # and/or create a kustomization on management-cluster to manage sylva-units helmRelease from git
+
+              echo "-- Freeze reconciliation of current job Kustomization in source cluster as we're done"
+              kubectl -n $TARGET_NAMESPACE annotate kustomizations pivot kustomize.toolkit.fluxcd.io/reconcile=disabled --overwrite
+
+              echo "-- Accelerate reconciliation of the sylva-units HelmRelease"
+              kubectl -n $TARGET_NAMESPACE --kubeconfig /tmp/management-cluster-kubeconfig \
+                  annotate --overwrite helmrelease/sylva-units reconcile.fluxcd.io/requestedAt="$(date -uIs)"
+
+              echo "-- Signal to bootstrap.sh that the pivot job has ended"
+              kubectl -n $TARGET_NAMESPACE annotate --overwrite kustomizations.kustomize.toolkit.fluxcd.io cluster pivot/started-
+
+              # if infra_provider is capm3 delete unused available bmh from pivot to avoid them to be managed by two operators that will compete to manage their power state
+              if kubectl -n $TARGET_NAMESPACE get kustomizations capm3 ; then
+                echo "-- delete all unused bmh from bootstrap cluster"
+                kubectl -n $TARGET_NAMESPACE delete bmh --all
+              fi
+
+              echo "-- All done"
+
+  multus:
+    enabled_conditions:
+    - '{{ tuple . "libvirt-metal" | include "unit-enabled" }}'
+    depends_on:
+      calico: false
+
+  libvirt-metal:
+    info:
+      description: installs libvirt for baremetal emulation
+      details: this unit is used in bootstrap cluster for baremetal testing
+      maturity: stable
+    unit_templates: []
+    enabled_conditions:
+    - '{{ not (.Values.libvirt_metal.nodes | empty) }}'
+    depends_on:
+      multus-ready: true
+    repo: libvirt-metal
+    helmrelease_spec:
+      chart:
+        spec:
+          chart: charts/libvirt-metal
+      values: '{{ mergeOverwrite (dict "clusterVirtualIp" .Values.cluster_virtual_ip "clusterPublicIP" .Values._internal.bootstrap_node_ip "clusterPublicDomain" .Values.cluster_domain ) .Values.libvirt_metal | include "preserve-type" }}'
+
+  vsphere-cpi:
+    # overload vsphere-cpi definition in bootstrap context to deploy in the management cluster
+    # setting the same dependencies of the capv cluster unit in order to run in parallel
+    depends_on:
+      capi: true
+      capv: true
+      '{{ .Values.cluster.capi_providers.bootstrap_provider }}': true
+    helmrelease_spec:
+      kubeConfig:
+        secretRef:
+          name: '{{ .Values.cluster.name }}-kubeconfig'
+
+cluster:
+  capm3:
+    use_os_image_server_service_urls: '{{ not (.Values.libvirt_metal.nodes | empty) | include "preserve-type" }}'
+
+display_external_ip: '{{ .Values.metal3 | dig "external_bootstrap_ip" (.Values.metal3 | dig "bootstrap_ip" "127.0.0.1") }}'
+
+no_proxy_additional:
+  # we need to use the same services/pods CIDRs as the ones we hardcode for bootstrap kind cluster in tools/shell-lib/common.sh
+  # in KIND_POD_SUBNET and KIND_SVC_SUBNET, which we can retrieve by reading the kubeadm-config configmap
+  '{{ .Values._internal.kind_kubeadm_networking.podSubnet }}': true
+  '{{ .Values._internal.kind_kubeadm_networking.serviceSubnet }}': true
+
+cluster_public_endpoint: '{{ tuple (printf "https://%s:%s" .Values._internal.bootstrap_node_ip "8443") (tuple . "libvirt-metal" | include "unit-enabled") | include "set-only-if" }}'
+
+# only those components will be enabled on bootstrap cluster (this overrides 'units.<component>.enabled')
+# note that this list does *not* override enabled_conditions set on the units, those are still applied
+units_override_enabled:
+  - cert-manager
+  - capi
+  - '{{ .Values.cluster.capi_providers.infra_provider }}'
+  - '{{ .Values.cluster.capi_providers.bootstrap_provider }}'
+  - '{{ .Values._internal.metal3_unit }}'
+  - bootstrap-local-path
+  - ingress-nginx
+  - os-images-info
+  - os-image-server
+  - cluster
+  - cluster-reachable
+  - namespace-defs
+  - calico-crd
+  - calico
+  - tigera-clusterrole
+  - management-cluster-flux
+  - management-cluster-configs
+  - management-sylva-units
+  - pivot
+  - heat-operator
+  - capo-cluster-resources
+  - multus
+  - multus-ready
+  - libvirt-metal
+  - vsphere-cpi
+  - get-openstack-images

@@ -1,0 +1,9 @@
+cluster:
+  k8s_version: "v1.25.14+rke2r1"       # before apply-workload-cluster.sh
+  control_plane_replicas: 3
+  capo:
+    image_key: ubuntu-jammy-plain-rke2-1-25-14       # before apply-workload-cluster.sh
+
+sylva_diskimagebuilder_images:
+  ubuntu-jammy-plain-rke2-1-25-14:
+    enabled: true

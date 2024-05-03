@@ -1,0 +1,23 @@
+apiVersion: redhatcop.redhat.io/v1alpha1
+kind: JWTOIDCAuthEngineConfig
+metadata:
+  name: vault-oidc
+  namespace: keycloak
+spec:
+  connection:
+    tLSConfig:
+      skipVerify: true # see https://gitlab.com/sylva-projects/sylva-core/-/issues/261
+    address: https://vault.vault.svc.cluster.local:8200
+  authentication:
+    path: kubernetes
+    role: admin
+  path: oidc
+  defaultRole: sylva-admin
+  OIDCClientID: vault
+  OIDCCredentials:
+    secret:
+      name: keycloak-client-secret-vault-client
+    usernameKey: CLIENT_ID
+    passwordKey: CLIENT_SECRET
+  OIDCDiscoveryURL: "https://${KEYCLOAK_DNS}/realms/sylva"
+

@@ -1,0 +1,74 @@
+{{/*
+
+Save chart values as secret to ease debugging, when enabled.
+
+It enable to inspect how values are merged from various inputs (valueFiles, values,
+valuesFrom, PostRenderer) when this chart is deployed as a flux HelmRelease.
+
+the chart using following command:
+
+kubectl get secrets sylva-units-values -o template="{{ .data.values }}" | base64 -d
+
+*/}}
+{{- $envAll := set . "Values" (include "interpret-values-gotpl" . | fromJson) -}}
+{{/* to have a values checksum that is always the same for a given set of input values the values checksum that we compute cannot include dynamically computed things, like htpasswd */}}
+{{- $values_checksum := regexReplaceAll " passwordHash: .*" (.Values | toYaml) " passwordHash: xxxxxx" | sha256sum -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sylva-units-values
+  labels:
+{{ include "sylva-units.labels" . | indent 4 }}
+  annotations:
+    values-checksum: "{{ $values_checksum }}"
+type: Opaque
+stringData:
+  values: |
+{{ $envAll.Values | toYaml| indent 4 }}
+---
+{{/*
+
+sylva-units-status is a special Kustomization that depends on all other Kustomization
+produced by the chart. Hence looking at its status allows to tell if all units have been deployed.
+
+This Kustomization produced a ConfigMap which will be updated at the end
+of a deployment with information about the revision and values of the sylva-units Helm release.
+
+*/}}
+{{- $deps := list -}}
+{{- range $unit_name, $unit_def := $envAll.Values.units -}}
+  {{- if include "unit-enabled" (tuple $envAll $unit_name) -}}
+    {{- $deps = append $deps (dict "name" $unit_name) -}}
+  {{- end -}}
+{{- end }}
+{{- $deps = append $deps (dict "name" "cluster") -}}
+{{- $time := now }}
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: sylva-units-status
+  labels: {{ include "sylva-units.labels" $envAll | nindent 4 }}
+  annotations:
+    target-release-revision: "{{ .Release.Revision }}"
+    target-sylva-units-chart-version: "{{ .Chart.Version }}"
+    target-values-checksum: "{{ $values_checksum }}"
+    release-time: "{{ $time }}"
+spec:
+{{ .Values.unit_kustomization_spec_default | toYaml | indent 2 }}
+  sourceRef: {{ .Values.unit_helmrelease_kustomization_spec_default.sourceRef | toYaml | nindent 4 }}
+  path: ./kustomize-units/sylva-units-status
+  dependsOn: {{ $deps | toYaml | nindent 4 }}
+  wait: true
+  patches:
+    - target:
+        kind: ConfigMap
+      patch: |
+        kind: ConfigMap
+        metadata:
+          name: sylva-units-status
+        data:
+          release-revision: "{{ .Release.Revision }}"
+          sylva-units-chart-version: "{{ .Chart.Version }}"
+          release-time: "{{ $time }}"
+          values-checksum: "{{ $values_checksum }}"
+          additional-info: | {{ .Values.additional_sylva_units_status_info | toYaml | nindent 12 }}

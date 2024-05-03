@@ -1,0 +1,193 @@
+---
+apiVersion: heatoperator.sylva/v1
+kind: HeatStack
+metadata:
+  labels:
+    app.kubernetes.io/name: heatstack
+    app.kubernetes.io/instance: heatstack-capo-cluster-resources
+    app.kubernetes.io/part-of: heat-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: heat-operator
+  name: heatstack-capo-cluster-resources
+spec:
+  heatStack:
+    namePrefix: "${STACK_NAME_PREFIX}"
+    tag: ${CAPO_TAG}
+    template:
+      heat_template_version: "2018-08-31"
+
+      parameters:
+        network:
+          type: string
+          description: "Network name"
+        external_network:
+          type: string
+          description: "External Network ID"
+          default: ""
+        control_plane_affinity_policy:
+          type: string
+          description: "Control plane affinity policy"
+        worker_affinity_policy:
+          type: string
+          description: "Worker affinity policy"
+        control_plane_security_group_name:
+          type: string
+          description: "Control plane security group name"
+        worker_security_group_name:
+          type: string
+          description: "Worker security group name"
+        common_security_group_name:
+          type: string
+          description: "Common security group name"
+        control_plane_rules:
+          type: json
+          description: "Security group rules associated with the control plane VMs"
+          default:
+            direction: []
+            port: []
+            protocol: []
+            remote_ip_prefix: []
+        worker_rules:
+          type: json
+          description: "Security group rules associated with worker VMs"
+          default:
+            direction: []
+            port: []
+            protocol: []
+            remote_ip_prefix: []
+        common_sg_rules:
+          type: json
+          description: "Common security group rules associated with the control plane and worker VMs"
+          default:
+            direction: [ingress, ingress, ingress, ingress]
+            port: ['80', '443', '22', '53']
+            protocol: [tcp, tcp, tcp, udp]
+            remote_ip_prefix: [0.0.0.0/0, 0.0.0.0/0, 0.0.0.0/0, 0.0.0.0/0]
+        create_ironic_security_group:
+          type: boolean
+          description: "Whenever control plane and worker VMs security groups need to include Ironic flows"
+          default: false
+        ironic_rules:
+          type: json
+          description: "Security group rules associated with control plane and worker VMs for Ironic"
+          default:
+            direction: [ingress, ingress, ingress, ingress]
+            port: ['5050', '6180', '6385', '9999']
+            protocol: [tcp, tcp, tcp, tcp]
+            remote_ip_prefix: [0.0.0.0/0, 0.0.0.0/0, 0.0.0.0/0, 0.0.0.0/0]
+
+      conditions:
+        external_network_cond:
+          not:
+            equals:
+              - get_param: external_network
+              - ""
+
+      resources:
+        port:
+          type: OS::Neutron::Port
+          properties:
+            network: { get_param: network }
+        floating-ip:
+          type: OS::Neutron::FloatingIP
+          condition: external_network_cond
+          properties:
+            floating_network: { get_param: external_network }
+            port_id: { get_resource: port }
+        srvgroup-ctrl-plane:
+          type: OS::Nova::ServerGroup
+          properties:
+            policies:
+              - get_param: control_plane_affinity_policy
+        srvgroup-worker:
+          type: OS::Nova::ServerGroup
+          properties:
+            policies:
+              - get_param: worker_affinity_policy
+        security-group-ctrl-plane:
+          type: OS::Neutron::SecurityGroup
+          properties:
+            description: "Heat Stack managed security group for control plane VMs"
+            name: { get_param: control_plane_security_group_name }
+            rules:
+              repeat:
+                for_each:
+                  <%direction%>: { get_param: [control_plane_rules, direction] }
+                  <%port%>: { get_param: [control_plane_rules, port] }
+                  <%protocol%>: { get_param: [control_plane_rules, protocol] }
+                  <%remote_ip_prefix%>: { get_param: [control_plane_rules, remote_ip_prefix] }
+                template:
+                  protocol: <%protocol%>
+                  port_range_min: <%port%>
+                  port_range_max: <%port%>
+                  remote_ip_prefix: <%remote_ip_prefix%>
+                  direction: <%direction%>
+                permutations: false
+        security-group-worker:
+          type: OS::Neutron::SecurityGroup
+          properties:
+            description: "Heat Stack managed security group for worker VMs"
+            name: { get_param: worker_security_group_name }
+            rules:
+              repeat:
+                for_each:
+                  <%direction%>: { get_param: [worker_rules, direction] }
+                  <%port%>: { get_param: [worker_rules, port] }
+                  <%protocol%>: { get_param: [worker_rules, protocol] }
+                  <%remote_ip_prefix%>: { get_param: [worker_rules, remote_ip_prefix] }
+                template:
+                  protocol: <%protocol%>
+                  port_range_min: <%port%>
+                  port_range_max: <%port%>
+                  remote_ip_prefix: <%remote_ip_prefix%>
+                  direction: <%direction%>
+                permutations: false
+        security-group-common:
+          type: OS::Neutron::SecurityGroup
+          properties:
+            description: "Heat Stack managed common security group for control_plane and worker VMs"
+            name: { get_param: common_security_group_name }
+            rules:
+              repeat:
+                for_each:
+                  <%direction%>: {if: [{get_param: create_ironic_security_group}, { list_concat: [{ get_param: [common_sg_rules, direction]}, { get_param: [ironic_rules, direction] }]}, { get_param: [common_sg_rules, direction] }]}
+                  <%port%>: { if: [{get_param: create_ironic_security_group}, { list_concat: [{ get_param: [common_sg_rules, port]}, { get_param: [ironic_rules, port]}]}, { get_param: [common_sg_rules, port] }]}
+                  <%protocol%>: { if: [{get_param: create_ironic_security_group}, { list_concat: [{ get_param: [common_sg_rules, protocol]}, { get_param: [ironic_rules, protocol]}]}, { get_param: [common_sg_rules, protocol] }]}
+                  <%remote_ip_prefix%>: { if: [{get_param: create_ironic_security_group}, { list_concat: [{ get_param: [common_sg_rules, remote_ip_prefix]}, { get_param: [ironic_rules, remote_ip_prefix]}]}, { get_param: [common_sg_rules, remote_ip_prefix] }]}
+                template:
+                  protocol: <%protocol%>
+                  port_range_min: <%port%>
+                  port_range_max: <%port%>
+                  remote_ip_prefix: <%remote_ip_prefix%>
+                  direction: <%direction%>
+                permutations: false
+      outputs:
+        allocated_ip:
+          value: { get_attr: [port, fixed_ips, 0, ip_address] }
+          description: IP address allocated to the port
+        allocated_fip:
+          value: {if: [external_network_cond, { get_attr: [floating-ip, floating_ip_address] }, ""]}
+          description: Floating IP associated to the port
+        control_plane_servergroup_id:
+          value: { get_resource: srvgroup-ctrl-plane }
+          description: Control plane server group ID
+        worker_servergroup_id:
+          value: { get_resource: srvgroup-worker }
+          description: Control plane server group ID
+
+    environment:
+      parameters:
+        network: "${CAPO_NETWORK_ID}"
+        external_network: "${CAPO_EXTERNAL_NETWORK_ID}"
+        control_plane_affinity_policy: "${CONTROL_PLANE_AFFINITY_POLICY}"
+        worker_affinity_policy: "${WORKER_AFFINITY_POLICY}"
+        control_plane_security_group_name: "${CONTROL_PLANE_SECURITY_GROUP_NAME}"
+        worker_security_group_name: "${WORKER_SECURITY_GROUP_NAME}"
+        create_ironic_security_group: ${CAPO_CREATE_IRONIC_SECURITY_GROUP}
+        common_security_group_name: "${COMMON_SECURITY_GROUP_NAME}"
+  outputConfigMap:
+    name: capo-cluster-resources
+    labels:
+      copy-from-bootstrap-to-management: ""
+  identityRef: cluster-cloud-config
+  cloudName: capo_cloud

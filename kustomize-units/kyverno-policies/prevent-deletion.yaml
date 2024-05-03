@@ -1,0 +1,45 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: avoid-delete-mgmt-resources
+spec:
+  background: true
+  rules:
+  - name: helm-resources
+    match:
+      any:
+      - resources:
+          kinds:
+          - helm.toolkit.fluxcd.io/v2beta1/HelmRelease
+          - kustomize.toolkit.fluxcd.io/v1/Kustomization
+          names:
+          - cluster
+          namespaces:
+          - sylva-system
+    validate:
+      message: Deleting the Sylva Flux resources that describe the Cluster API cluster for the management cluster is not possible without breaking the Sylva management cluster.
+      deny:
+        conditions:
+        - key: "{{request.operation}}"
+          operator: In
+          value:
+          - DELETE
+  - name: cluster-resources
+    match:
+      any:
+      - resources:
+          kinds:
+          - cluster.x-k8s.io/v1beta1/Cluster
+          - "controlplane.cluster.x-k8s.io/*/*"
+          selector:
+            matchLabels:
+              cluster.x-k8s.io/cluster-name: management-cluster
+    validate:
+      message: Deleting the Sylva Flux resources that describe the Cluster API cluster for the management cluster is not possible without breaking the Sylva management cluster.
+      deny:
+        conditions:
+        - key: "{{request.operation}}"
+          operator: In
+          value:
+          - DELETE
+  validationFailureAction: Enforce

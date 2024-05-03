@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- tag.yaml
+- default-namespace.yaml
+- disable-automount-sa.yaml
+- prevent-deletion.yaml

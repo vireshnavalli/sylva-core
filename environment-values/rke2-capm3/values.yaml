@@ -1,0 +1,157 @@
+# This example environment values files will let you build
+# a Sylva two-node (1 control-plane + 1 worker) mgmt baremetal cluster
+
+cluster_virtual_ip: 10.188.36.149
+
+cluster:
+  capi_providers:
+    infra_provider: capm3
+    bootstrap_provider: cabpr
+
+  control_plane_replicas: 1
+
+  rke2:
+    additionalUserData:
+      config:
+        #cloud-config
+        users:
+          - name: sylva-user
+            groups: users
+            sudo: ALL=(ALL) NOPASSWD:ALL
+            shell: /bin/bash
+            lock_passwd: false
+            passwd: "put your password hash here"  # (copy pasted from /etc/shadow or created with "mkpasswd --method=SHA-512 --stdin")
+            ssh_authorized_keys:
+              - ssh-rsa AAAA...... YOUR KEY HERE ....UqnQ==
+
+  capm3:
+    image_key: ubuntu-jammy-plain-rke2-1-27-6
+    primary_pool_network: 10.188.36.128
+    primary_pool_gateway: 10.188.36.129
+    primary_pool_start: 10.188.36.148
+    primary_pool_end: 10.188.36.148
+    primary_pool_prefix: "26"
+    provisioning_pool_network: 10.199.39.192
+    provisioning_pool_gateway: 10.199.39.193
+    provisioning_pool_start: 10.199.39.219
+    provisioning_pool_end: 10.199.39.219
+    provisioning_pool_prefix: "27"
+    dns_servers:
+    - 1.2.3.4
+    - 8.8.8.8
+
+  control_plane:  # tweak network configuration as needed
+
+    capm3:
+      hostSelector:  # criteria for matching labels on BareMetalHost objects defined by baremetal_hosts value
+        matchLabels:
+          cluster-role: control-plane
+
+      provisioning_pool_interface: bond0
+      primary_pool_interface: bond0.13
+
+    network_interfaces:
+      # for CAPM3 folowing are used and mapped to Metal3Data.spec.template.spec.networkData.links
+      bond0:
+        type: bond
+        interfaces:
+          - ens1f0
+          - ens1f1
+        vlans:
+          - id: 13
+      ens1f0:
+        type: phy
+      ens1f1:
+        type: phy
+
+  machine_deployment_default:  # tweak as needed
+
+    capm3:
+      hostSelector:
+        matchLabels:
+          cluster-role: worker
+
+      provisioning_pool_interface: bond0
+      primary_pool_interface: bond0.13
+
+  machine_deployments:
+    md0:
+      replicas: 1
+      network_interfaces:
+        bond0:
+          type: bond
+          interfaces:
+            - ens2f0
+            - ens2f1
+          vlans:
+            - id: 13
+        ens2f0:
+          type: phy
+        ens2f1:
+          type: phy
+
+  baremetal_host_default:
+    bmh_spec:
+      online: true
+      externallyProvisioned: false
+      bmc:
+        disableCertificateVerification: true
+      automatedCleaningMode: metadata
+      bootMode: legacy
+      rootDeviceHints:  # https://github.com/metal3-io/baremetal-operator/blob/main/docs/api.md#rootdevicehints
+        deviceName: /dev/sda
+
+  baremetal_hosts:  # corresponding credentials need to be set in secrets.yaml
+
+    # this example is based on what worked on an HP Proliant DL360 Gen10
+    my-hpe-server:
+      bmh_metadata:
+        labels:
+          cluster-role: control-plane
+      bmh_spec:
+        description: my control plane node
+        bmc:
+          address: redfish-virtualmedia://66.66.66.66/redfish/v1/Systems/1   # put the real BMC address here ()
+          disableCertificateVerification: true
+        bootMACAddress: ba:ad:00:c0:ff:ee    # put the real address here!
+        # rootDeviceHints:
+        #   hctl: 2:1:0:0   # tweak as needed
+
+    # this example is based on what worked on an Dell PowerEdge XR11
+    my-dell-server:
+      bmh_metadata:
+        labels:
+          cluster-role: worker
+      bmh_spec:
+        description: my worker node
+        bmc:
+          address: idrac-virtualmedia://77.77.77.77/redfish/v1/Systems/System.Embedded.1  # put the real BMC address here!
+        bootMACAddress: ba:ad:00:c0:ff:ee    # put the real address here!
+
+units:
+
+  longhorn:
+    enabled: true
+
+metal3:
+  bootstrap_ip: 10.177.129.138
+
+proxies:
+  # put your own proxy settings here if you need
+  http_proxy: ""
+  https_proxy: ""
+  no_proxy: ""
+
+# configure containerd registry mirrors following https://github.com/containerd/containerd/blob/main/docs/hosts.md
+# see charts/syla-units/values.yaml for a more detailled example
+# registry_mirrors:
+#   hosts_config:
+#     docker.io:
+#     - mirror_url: http://your.mirror/docker
+
+# add ntp servers if you need
+ntp:
+  enabled: false
+  servers:
+  # - 1.2.3.4
+  # - 1.2.3.5

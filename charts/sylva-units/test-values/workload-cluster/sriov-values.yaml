@@ -1,0 +1,12 @@
+---
+sriov:
+  node_policies:
+    sriov-policy1:
+      nodeSelector: {}
+      resourceName: sriov_nic1
+      numVfs: 12
+      deviceType: vfio-pci
+      nicSelector:
+        pfNames:
+          - enp216s0f0
+          - enp216s0f1
